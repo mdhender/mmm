@@ -1,0 +1,310 @@
+// Copyright (c) 2026 Michael D Henderson.
+
+package storage_test
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"zombiezen.com/go/sqlite"
+	"zombiezen.com/go/sqlite/sqlitex"
+
+	"github.com/mdhender/mmm/internal/money"
+	"github.com/mdhender/mmm/internal/storage"
+)
+
+// open returns a Store backed by a fresh database in a temporary directory,
+// along with its path and a close func that is safe to call more than once.
+func open(t *testing.T) (*storage.Store, string, func()) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "checkbook.db")
+	s, err := storage.Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	// Pool.Close blocks until every borrowed connection is returned, so this
+	// cleanup must run after the Put registered by conn. Cleanups run LIFO and
+	// conn is always called later, so that ordering holds.
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { _ = s.Close() }) })
+	return s, path, func() { once.Do(func() { _ = s.Close() }) }
+}
+
+// conn borrows a connection that is returned when the test ends.
+func conn(t *testing.T, s *storage.Store) *sqlite.Conn {
+	t.Helper()
+	c, err := s.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	t.Cleanup(func() { s.Put(c) })
+	return c
+}
+
+// queryInt64 runs a query expected to return exactly one integer.
+func queryInt64(t *testing.T, c *sqlite.Conn, query string) int64 {
+	t.Helper()
+	var got int64
+	var rows int
+	err := sqlitex.ExecuteTransient(c, query, &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			got, rows = stmt.ColumnInt64(0), rows+1
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+	if rows != 1 {
+		t.Fatalf("%s returned %d rows, want 1", query, rows)
+	}
+	return got
+}
+
+func TestOpenRejectsEmptyPath(t *testing.T) {
+	if _, err := storage.Open(context.Background(), ""); !errors.Is(err, storage.ErrMissingPath) {
+		t.Fatalf("Open(%q) = %v, want ErrMissingPath", "", err)
+	}
+}
+
+// TestOpenSetsAppID confirms the database is stamped with the ASCII bytes of
+// "MMM ", which is what identifies the file as ours.
+func TestOpenSetsAppID(t *testing.T) {
+	s, _, _ := open(t)
+	if got := queryInt64(t, conn(t, s), `PRAGMA application_id;`); got != int64(storage.AppID) {
+		t.Fatalf("application_id = %#x, want %#x", got, storage.AppID)
+	}
+	if got := string([]byte{0x4d, 0x4d, 0x4d, 0x20}); got != "MMM " {
+		t.Fatalf("AppID bytes spell %q, want %q", got, "MMM ")
+	}
+}
+
+// TestOpenAppliesMigrations confirms every table in migration 1 exists and that
+// user_version records the number of migrations applied.
+func TestOpenAppliesMigrations(t *testing.T) {
+	s, _, _ := open(t)
+	c := conn(t, s)
+
+	for _, table := range []string{"accounts", "transactions", "splits", "categories", "reconciliations"} {
+		q := `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '` + table + `';`
+		if got := queryInt64(t, c, q); got != 1 {
+			t.Errorf("table %s: found %d, want 1", table, got)
+		}
+	}
+	if got := queryInt64(t, c, `PRAGMA user_version;`); got != 1 {
+		t.Errorf("user_version = %d, want 1 (one migration applied)", got)
+	}
+}
+
+// TestOpenIsIdempotent confirms reopening an existing database neither re-runs
+// migrations nor fails on the application_id it wrote last time.
+func TestOpenIsIdempotent(t *testing.T) {
+	_, path, closeStore := open(t)
+	closeStore()
+
+	again, err := storage.Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+
+	// Borrow, read, and return the connection before closing: Pool.Close waits
+	// for outstanding connections.
+	c, err := again.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	got := queryInt64(t, c, `PRAGMA user_version;`)
+	again.Put(c)
+
+	if got != 1 {
+		t.Fatalf("user_version = %d after reopen, want 1", got)
+	}
+	if again.Path() != path {
+		t.Fatalf("Path() = %q, want %q", again.Path(), path)
+	}
+	if err := again.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestOpenRejectsForeignDatabase confirms the application_id guard: a SQLite
+// file belonging to some other program must not be migrated into a checkbook.
+func TestOpenRejectsForeignDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-ours.db")
+
+	c, err := sqlite.OpenConn(path, sqlite.OpenReadWrite|sqlite.OpenCreate)
+	if err != nil {
+		t.Fatalf("OpenConn: %v", err)
+	}
+	for _, q := range []string{
+		`PRAGMA application_id = 305419896;`, // 0x12345678
+		`CREATE TABLE someone_elses_data (id INTEGER PRIMARY KEY);`,
+	} {
+		if err := sqlitex.ExecuteTransient(c, q, nil); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	s, err := storage.Open(context.Background(), path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open succeeded on a database belonging to another application")
+	}
+}
+
+// TestForeignKeysEnforced confirms prepareConn turned enforcement on. SQLite
+// defaults it off per connection, which would silently make every REFERENCES
+// clause in the schema decorative.
+func TestForeignKeysEnforced(t *testing.T) {
+	s, _, _ := open(t)
+	c := conn(t, s)
+
+	if got := queryInt64(t, c, `PRAGMA foreign_keys;`); got != 1 {
+		t.Fatalf("PRAGMA foreign_keys = %d, want 1", got)
+	}
+
+	err := sqlitex.ExecuteTransient(c,
+		`INSERT INTO splits (transaction_id, amount) VALUES (999, 100);`, nil)
+	if err == nil {
+		t.Fatal("inserted a split referencing a nonexistent transaction")
+	}
+}
+
+// TestMoneyRoundTrip confirms an amount survives a write and read unchanged, in
+// currencies with different scales.
+func TestMoneyRoundTrip(t *testing.T) {
+	s, _, _ := open(t)
+	c := conn(t, s)
+
+	for _, tt := range []struct {
+		name     string
+		decimal  string
+		currency money.Currency
+	}{
+		{name: "USD two places", decimal: "-84.17", currency: money.USD},
+		{name: "USD large", decimal: "1000000.01", currency: money.USD},
+		{name: "JPY no minor units", decimal: "4321", currency: money.JPY},
+		{name: "KWD three places", decimal: "12.345", currency: money.KWD},
+		{name: "zero", decimal: "0.00", currency: money.USD},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			want, err := money.ParseDecimal(tt.decimal, tt.currency)
+			if err != nil {
+				t.Fatalf("ParseDecimal: %v", err)
+			}
+
+			accountID := insertAccount(t, c, tt.name, tt.currency)
+
+			stmt, _, err := c.PrepareTransient(
+				`INSERT INTO transactions (account_id, date, payee, amount)
+				 VALUES ($account_id, '2026-08-29', 'Felipe Motta', $amount);`)
+			if err != nil {
+				t.Fatalf("prepare insert: %v", err)
+			}
+			stmt.SetInt64("$account_id", accountID)
+			storage.BindMoney(stmt, "$amount", want)
+			if _, err := stmt.Step(); err != nil {
+				t.Fatalf("insert: %v", err)
+			}
+			if err := stmt.Finalize(); err != nil {
+				t.Fatalf("finalize: %v", err)
+			}
+
+			sel, _, err := c.PrepareTransient(
+				`SELECT amount FROM transactions WHERE account_id = $account_id;`)
+			if err != nil {
+				t.Fatalf("prepare select: %v", err)
+			}
+			defer sel.Finalize()
+			sel.SetInt64("$account_id", accountID)
+			hasRow, err := sel.Step()
+			if err != nil || !hasRow {
+				t.Fatalf("select: hasRow=%v err=%v", hasRow, err)
+			}
+
+			got, err := storage.ColumnMoney(sel, "amount", tt.currency)
+			if err != nil {
+				t.Fatalf("ColumnMoney: %v", err)
+			}
+			if got.Amount() != want.Amount() || got.Currency() != want.Currency() {
+				t.Fatalf("round trip = %s, want %s", got, want)
+			}
+			if got.Decimal() != want.Decimal() {
+				t.Fatalf("Decimal() = %s, want %s", got.Decimal(), want.Decimal())
+			}
+		})
+	}
+}
+
+// TestAmountRejectsInexactTypes is the regression test for the documented
+// footgun: passing a money.Money straight to ExecOptions.Args stringifies it,
+// and a float amount is exactly what CO-1 forbids. The typeof() CHECK turns both
+// into errors at write time rather than silent corruption.
+func TestAmountRejectsInexactTypes(t *testing.T) {
+	s, _, _ := open(t)
+	c := conn(t, s)
+	accountID := insertAccount(t, c, "Checking", money.USD)
+
+	for _, tt := range []struct {
+		name string
+		arg  any
+	}{
+		{name: "float", arg: -84.17},
+		{name: "text from fmt.Sprint of a Money", arg: "USD -84.17"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := sqlitex.ExecuteTransient(c,
+				`INSERT INTO transactions (account_id, date, payee, amount)
+				 VALUES (?, '2026-08-29', 'Riba Smith', ?);`,
+				&sqlitex.ExecOptions{Args: []any{accountID, tt.arg}})
+			if err == nil {
+				t.Fatalf("stored %v (%T) in an amount column", tt.arg, tt.arg)
+			}
+		})
+	}
+}
+
+// TestStatusAndDateConstraints confirms the schema rejects the states the
+// register has no meaning for.
+func TestStatusAndDateConstraints(t *testing.T) {
+	s, _, _ := open(t)
+	c := conn(t, s)
+	accountID := insertAccount(t, c, "Checking", money.USD)
+
+	for _, tt := range []struct {
+		name  string
+		date  string
+		state string
+	}{
+		{name: "unknown status", date: "2026-08-29", state: "pending"},
+		{name: "malformed date", date: "08/29/2026", state: "cleared"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := sqlitex.ExecuteTransient(c,
+				`INSERT INTO transactions (account_id, date, payee, amount, status)
+				 VALUES (?, ?, 'Riba Smith', -8417, ?);`,
+				&sqlitex.ExecOptions{Args: []any{accountID, tt.date, tt.state}})
+			if err == nil {
+				t.Fatalf("accepted date=%q status=%q", tt.date, tt.state)
+			}
+		})
+	}
+}
+
+// insertAccount adds an account and returns its id.
+func insertAccount(t *testing.T, c *sqlite.Conn, name string, cur money.Currency) int64 {
+	t.Helper()
+	err := sqlitex.ExecuteTransient(c,
+		`INSERT INTO accounts (name, type, currency) VALUES (?, 'checking', ?);`,
+		&sqlitex.ExecOptions{Args: []any{name, string(cur)}})
+	if err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	return c.LastInsertRowID()
+}
