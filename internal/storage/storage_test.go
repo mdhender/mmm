@@ -5,7 +5,9 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -307,4 +309,121 @@ func insertAccount(t *testing.T, c *sqlite.Conn, name string, cur money.Currency
 		t.Fatalf("insert account: %v", err)
 	}
 	return c.LastInsertRowID()
+}
+
+// TestOpenNeverCreatesDirectories confirms Open fails on a path whose parent
+// does not exist, and leaves the filesystem alone. Without this, a mistyped or
+// stray relative path in a test would scatter directories around the tree.
+func TestOpenNeverCreatesDirectories(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "no", "such", "dir")
+	path := filepath.Join(missing, "checkbook.db")
+
+	s, err := storage.Open(context.Background(), path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open succeeded with a nonexistent parent directory")
+	}
+	if !errors.Is(err, storage.ErrMissingDirectory) {
+		t.Fatalf("Open = %v, want ErrMissingDirectory", err)
+	}
+
+	// Nothing may have been created, at any level.
+	for _, p := range []string{path, missing, filepath.Join(root, "no", "such"), filepath.Join(root, "no")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s exists after a failed Open", p)
+		}
+	}
+}
+
+// TestPragmasHoldOnEveryConnection borrows every connection in the pool at once
+// and confirms each enforces foreign keys and is in WAL mode.
+//
+// sqlitex prepares a connection lazily, on its first Take, so a pragma checked
+// only on the first borrow proves nothing about the other nine. Several browser
+// tabs will use several connections.
+func TestPragmasHoldOnEveryConnection(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+
+	// Hold them all simultaneously so the pool cannot hand back the same one.
+	conns := make([]*sqlite.Conn, 0, storage.PoolSize)
+	defer func() {
+		for _, c := range conns {
+			s.Put(c)
+		}
+	}()
+
+	for i := 0; i < storage.PoolSize; i++ {
+		c, err := s.Conn(ctx)
+		if err != nil {
+			t.Fatalf("Conn %d: %v", i, err)
+		}
+		conns = append(conns, c)
+	}
+
+	for i, c := range conns {
+		if got := queryInt64(t, c, `PRAGMA foreign_keys;`); got != 1 {
+			t.Errorf("connection %d: foreign_keys = %d, want 1", i, got)
+		}
+		var mode string
+		err := sqlitex.ExecuteTransient(c, `PRAGMA journal_mode;`, &sqlitex.ExecOptions{
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				mode = stmt.ColumnText(0)
+				return nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("connection %d: journal_mode: %v", i, err)
+		}
+		if !strings.EqualFold(mode, "wal") {
+			t.Errorf("connection %d: journal_mode = %q, want wal", i, mode)
+		}
+	}
+}
+
+// TestConcurrentReadDuringWrite confirms WAL is doing its job: a reader on one
+// connection is not blocked by an open write transaction on another. This is the
+// multi-tab case -- one tab importing while another scrolls the register.
+//
+// Note what this does NOT establish: WAL prevents readers and writers from
+// blocking each other, not one tab overwriting another tab's edit. See the
+// concurrency note in CLAUDE.md.
+func TestConcurrentReadDuringWrite(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+
+	writer, err := s.Conn(ctx)
+	if err != nil {
+		t.Fatalf("writer Conn: %v", err)
+	}
+	defer s.Put(writer)
+	reader, err := s.Conn(ctx)
+	if err != nil {
+		t.Fatalf("reader Conn: %v", err)
+	}
+	defer s.Put(reader)
+
+	insertAccount(t, writer, "Checking", money.USD)
+
+	if err := sqlitex.ExecuteTransient(writer, `BEGIN IMMEDIATE;`, nil); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := sqlitex.ExecuteTransient(writer,
+		`INSERT INTO accounts (name, type, currency) VALUES ('Savings', 'savings', 'USD');`,
+		nil); err != nil {
+		t.Fatalf("insert during transaction: %v", err)
+	}
+
+	// The reader must see the pre-transaction snapshot without blocking.
+	if got := queryInt64(t, reader, `SELECT count(*) FROM accounts;`); got != 1 {
+		t.Errorf("reader saw %d accounts mid-write, want 1 (uncommitted row must be invisible)", got)
+	}
+
+	if err := sqlitex.ExecuteTransient(writer, `COMMIT;`, nil); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if got := queryInt64(t, reader, `SELECT count(*) FROM accounts;`); got != 2 {
+		t.Errorf("reader saw %d accounts after commit, want 2", got)
+	}
 }

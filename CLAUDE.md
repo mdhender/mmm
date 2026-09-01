@@ -118,6 +118,40 @@ Conventions the schema encodes:
 - **Dates are `TEXT` in ISO 8601 `YYYY-MM-DD`**, which sorts chronologically as a string. A `GLOB`
   CHECK enforces the shape; impossible-but-well-formed dates are the domain layer's problem.
 
+### Concurrency and the multi-tab case
+
+The household may have several browser tabs open on the same register, so requests genuinely
+overlap. `PoolSize` is 10 and set explicitly.
+
+`prepareConn` **verifies** rather than merely requests its pragmas — it reads `foreign_keys` and
+`journal_mode` back and returns an error if either did not take. sqlitex calls it lazily, once per
+connection on that connection's first `Take`, and returns the error instead of the connection, so
+every connection a caller can borrow has been through it. A test borrows all ten at once and
+checks each; do not weaken that to a single-connection check.
+
+WAL arrives from sqlitex's default `Flags` (which include `sqlite.OpenWAL`). **Setting
+`Options.Flags` explicitly would silently drop it** — the verification in `prepareConn` is what
+turns that into a startup failure rather than a quiet loss of crash safety.
+
+**What WAL does and does not solve.** It keeps readers and writers from blocking each other: one
+tab can scroll the register while another imports. It does *nothing* about lost updates. Two tabs
+that load the same transaction and both save will have the second write silently discard the
+first — WAL, connection pooling, and transactions all permit this, because each request is its own
+short transaction.
+
+CO-3 forbids that, and it is **not yet implemented**. The intended fix is optimistic concurrency:
+a version token on mutable rows, `UPDATE ... WHERE id = ? AND version = ?`, and a conflict shown
+to the user when no row matches. That needs a new (append-only) migration and handler support.
+
+**No authentication, authorization, sessions, or CSRF tokens** (PL-7). The server binds to
+loopback, has no remote origin and no notion of accounts, so there is no second principal for such
+a mechanism to distinguish. Do not add this machinery reflexively because the code looks like a
+web application.
+
+`Open` never creates directories (ST-6): a path whose parent is missing fails with
+`ErrMissingDirectory` and leaves the filesystem untouched, so a stray relative path in a test
+cannot scatter folders across the tree.
+
 ## Constraints that override normal defaults
 
 `SPECIFICATION.md` is authoritative and should be read in full. These are the requirements most

@@ -28,6 +28,10 @@ requirements; where they conflict with this document, this document wins.
   records to a new computer MUST require only copying files — never deactivating one machine,
   authorizing another, or contacting support.
 - **PL-6** A release MUST state where the data lives and how to back it up.
+- **PL-7** The web UI serves one household over loopback, with no remote origin and no accounts,
+  so it MUST NOT grow authentication, authorization, session management, or CSRF machinery. There
+  is no second principal for such a mechanism to distinguish. Anything that reintroduces one is an
+  SC-1 question, not an implementation detail.
 
 ## ST — Data and storage
 
@@ -40,6 +44,9 @@ requirements; where they conflict with this document, this document wins.
   effect of ordinary startup.
 - **ST-5** The data model SHOULD stay close to `accounts`, `transactions`, `splits`, `categories`,
   and `reconciliations`. Growth beyond that needs an SC-1 justification.
+- **ST-6** Opening a database MUST create the file but MUST NOT create directories. A path whose
+  parent directory does not exist MUST fail, and MUST NOT leave anything behind. A mistyped path
+  is a mistake to report, not a tree to build.
 
 ## RG — Register and core operations
 
@@ -92,6 +99,11 @@ requirements; where they conflict with this document, this document wins.
   for monetary values.
 - **CO-2** Transactions, splits, transfers, imports, balances, and reconciliations MUST have
   deterministic rules and focused tests.
+- **CO-3** A write MUST NOT silently overwrite a change made since the writer last read the record.
+  The household may have several browser tabs open on the same register, so concurrent edits are
+  expected rather than exceptional. The application MUST detect the conflict and tell the user;
+  discarding either edit without saying so is precisely the kind of quiet loss that costs the
+  register its trust.
 
 ## PV — Privacy
 
