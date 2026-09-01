@@ -1,0 +1,15 @@
+*~
+*.csv
+*.db
+*.db-*
+*.qfx
+*.qif
+*.ofx
+*.swp
+.DS_Store
+.env.local
+.env.*.local
+.idea/
+imports/
+/mmm
+
