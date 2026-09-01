@@ -12,9 +12,15 @@ code written here is still creating the application rather than modifying it.
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
 `RG-`, `RC-`, `IE-`, `BK-`, `CO-`, `PV-`, `TS-`, `RP-`, `SC-`). Check work against it and cite IDs
 in commits and reviews. `MANIFESTO.md` explains why those rules exist and settles questions of
-taste and direction. The `docs/` notes are design intent for specific slices (storage, imports,
-reconciliation, web UI, TUI, package layout) and are **not** binding — where they conflict with
-the specification, the specification wins.
+taste and direction. The notes directly under `docs/` are design intent for specific slices
+(storage, imports, reconciliation, web UI, TUI, package layout) and are **not** binding — where
+they conflict with the specification, the specification wins.
+
+`docs/references/`, `docs/how-to/`, and `docs/explanations/` are something else: **end-user
+documentation**, organized by [Diataxis](https://diataxis.fr) type. They describe the program as
+it actually behaves, so a change in behavior is a change to them — particularly
+`docs/references/user-manual.md`, which names the version it applies to. Do not document intent
+there; a feature that does not exist yet is listed as absent, not described as present.
 
 ## Commands
 
