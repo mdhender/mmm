@@ -47,6 +47,15 @@ requirements; where they conflict with this document, this document wins.
 - **ST-6** Opening a database MUST create the file but MUST NOT create directories. A path whose
   parent directory does not exist MUST fail, and MUST NOT leave anything behind. A mistyped path
   is a mistake to report, not a tree to build.
+- **ST-7** An instant MUST be stored in UTC, as `YYYY-MM-DDTHH:MM:SS.ffffffZ`. One timezone and a
+  fixed width are what let a text column sort chronologically and answer range queries. A local
+  time, or a mixture of offsets, MUST NOT be stored.
+- **ST-8** A calendar date — a transaction's date, a statement date — is not an instant. It MUST
+  remain timezone-free and MUST NOT be converted to or from UTC: a purchase made on the 29th is
+  dated the 29th regardless of where the household reads it.
+- **ST-9** Primary keys MUST NOT be reused. Deleting a record MUST NOT free its identifier for a
+  later one, or anything still holding that identifier — an open tab, a bookmark, an export, a
+  reconciliation — would silently come to mean a different record.
 
 ## RG — Register and core operations
 
@@ -58,6 +67,9 @@ requirements; where they conflict with this document, this document wins.
   and filter the register; import transactions from files; export records and create backups.
 - **RG-3** Destructive actions MUST require confirmation.
 - **RG-4** Errors MUST say what happened and what the user can safely do next.
+- **RG-5** Instants MUST be displayed in the timezone the person reading them is in, converted at
+  the point of display. The server stores UTC (ST-7) and MUST NOT assume a household timezone.
+  Calendar dates (ST-8) are shown as written and MUST NOT be shifted.
 
 ## RC — Reconciliation
 

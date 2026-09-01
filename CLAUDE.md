@@ -100,7 +100,13 @@ hand-roll migration logic:
   stops the program writing into an unrelated SQLite file. **It must never change.**
 - Migrations are **append-only** (ST-4). Progress is a count in `user_version`, so editing or
   reordering a shipped migration silently desynchronizes every database that already ran it.
-  Correct a mistake by appending a migration.
+  Correct a mistake by appending a migration. `MigrationCount()` reports how many there are;
+  assert against it rather than hardcoding a number.
+- Some changes need a **table rebuild** (create, copy, drop, rename) because SQLite's `ALTER TABLE`
+  cannot add `AUTOINCREMENT`, a CHECK, or a non-constant DEFAULT. Migration 3 is the worked
+  example: it sets `legacy_alter_table` for the duration and declares
+  `MigrationOptions{DisableForeignKeys: true}`. Note that a non-constant `DEFAULT` *is* legal in
+  `CREATE TABLE` and only forbidden in `ADD COLUMN`.
 - `prepareConn` sets two pragmas per connection: `foreign_keys = ON` (SQLite defaults it **off**,
   which would make every `REFERENCES` clause decorative) and `journal_mode = WAL`.
 
@@ -139,6 +145,23 @@ In-memory databases do not support WAL and report a journal mode of `memory`. `p
 expects that for in-memory stores and skips the WAL check, but still enforces and verifies
 `foreign_keys`, so constraint behavior under test matches production.
 
+### Time, dates, and identifiers
+
+**Instants are stored in UTC** as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (ST-7) — `storage.TimeLayout`,
+with `FormatTime`, `ParseTime`, `BindTime`, and `ColumnTime`. One timezone and a fixed width are
+what make the TEXT column sort chronologically. Parsing is strict: a value with an offset other
+than `Z`, or without microseconds, is rejected rather than quietly reinterpreted. **The browser
+converts for display** (RG-5); the server never assumes a household timezone.
+
+**Calendar dates are not instants** (ST-8). `transactions.date` and `statement_date` stay
+`YYYY-MM-DD` and are deliberately timezone-free — converting them to UTC would let a purchase move
+to the previous day for a household west of UTC. Do not "fix" this by making them timestamps.
+
+**Every table uses `INTEGER PRIMARY KEY AUTOINCREMENT`** (ST-9). Without it SQLite assigns
+`max(rowid)+1`, so deleting the newest row hands its id to the next insert and any tab, bookmark,
+export, or reconciliation holding that id silently comes to mean a different record. `AUTOINCREMENT`
+keeps a high-water mark in `sqlite_sequence`. New tables must use it too.
+
 ### Concurrency and the multi-tab case
 
 The household may have several browser tabs open on the same register, so requests genuinely
@@ -160,9 +183,19 @@ that load the same transaction and both save will have the second write silently
 first — WAL, connection pooling, and transactions all permit this, because each request is its own
 short transaction.
 
-CO-3 forbids that, and it is **not yet implemented**. The intended fix is optimistic concurrency:
-a version token on mutable rows, `UPDATE ... WHERE id = ? AND version = ?`, and a conflict shown
-to the user when no row matches. That needs a new (append-only) migration and handler support.
+CO-3 forbids that. **The schema now supports it; the handlers do not exist yet.** The token is
+`updated_at`, not a separate counter: read it with the record, then
+`UPDATE ... SET updated_at = ? WHERE id = ? AND updated_at = ?`. A stale tab matches no rows, so
+`Changes()` returns 0 and the caller must tell the user rather than retrying blindly.
+
+Always compute the new value with `storage.NextUpdatedAt(prev, now)`. A wall clock alone is not a
+safe token — two edits inside one microsecond, or a clock stepped backwards by NTP, would reuse a
+value and let the *next* compare-and-set succeed against stale data. `NextUpdatedAt` returns the
+later of `now` and one microsecond past `prev`, so the token strictly increases per record while
+staying an honest timestamp.
+
+`splits` deliberately have no token. A split is edited as part of its transaction, so the
+transaction is the aggregate root and its `updated_at` guards the whole record.
 
 **No authentication, authorization, sessions, or CSRF tokens** (PL-7). The server binds to
 loopback, has no remote origin and no notion of accounts, so there is no second principal for such

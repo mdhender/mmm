@@ -97,8 +97,8 @@ func TestOpenAppliesMigrations(t *testing.T) {
 			t.Errorf("table %s: found %d, want 1", table, got)
 		}
 	}
-	if got := queryInt64(t, c, `PRAGMA user_version;`); got != 1 {
-		t.Errorf("user_version = %d, want 1 (one migration applied)", got)
+	if got, want := queryInt64(t, c, `PRAGMA user_version;`), int64(storage.MigrationCount()); got != want {
+		t.Errorf("user_version = %d, want %d (every migration applied)", got, want)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestOpenIsIdempotent(t *testing.T) {
 	got := queryInt64(t, c, `PRAGMA user_version;`)
 	again.Put(c)
 
-	if got != 1 {
-		t.Fatalf("user_version = %d after reopen, want 1", got)
+	if want := int64(storage.MigrationCount()); got != want {
+		t.Fatalf("user_version = %d after reopen, want %d", got, want)
 	}
 	if again.Path() != path {
 		t.Fatalf("Path() = %q, want %q", again.Path(), path)
@@ -492,8 +492,10 @@ func TestOpenMemorySharedAcrossConnections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writer Conn: %v", err)
 	}
-	insertAccount(t, writer, "Checking", money.USD)
-	s.Put(writer)
+	func() {
+		defer s.Put(writer)
+		insertAccount(t, writer, "Checking", money.USD)
+	}()
 
 	// A different connection from the pool must see it. Hold several at once so
 	// this cannot be satisfied by getting the same connection back.
@@ -538,8 +540,10 @@ func writeAndCompare(t *testing.T, a, b *storage.Store) {
 	if err != nil {
 		t.Fatalf("a.Conn: %v", err)
 	}
-	insertAccount(t, ca, "Checking", money.USD)
-	a.Put(ca)
+	func() {
+		defer a.Put(ca)
+		insertAccount(t, ca, "Checking", money.USD)
+	}()
 
 	cb, err := b.Conn(ctx)
 	if err != nil {
@@ -602,8 +606,10 @@ func TestOpenMemoryTouchesNoFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Conn: %v", err)
 		}
-		insertAccount(t, c, "Checking-"+s.Path(), money.USD)
-		s.Put(c)
+		func() {
+			defer s.Put(c)
+			insertAccount(t, c, "Checking-"+s.Path(), money.USD)
+		}()
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -616,5 +622,79 @@ func TestOpenMemoryTouchesNoFiles(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("in-memory stores created files: %v", names)
+	}
+}
+
+// TestPrimaryKeysAreNeverReused confirms every table uses AUTOINCREMENT rather
+// than a bare rowid alias.
+//
+// SQLite assigns max(rowid)+1 by default, so deleting the newest row hands its id
+// to the next insert. Anything still holding that id -- an open browser tab, a
+// bookmarked URL, an exported file, a reconciliation -- would silently start
+// pointing at an unrelated record.
+func TestPrimaryKeysAreNeverReused(t *testing.T) {
+	s := openMemory(t, memoryName(t))
+	c, err := s.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	defer s.Put(c)
+
+	accountID := insertAccount(t, c, "Checking", money.USD)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if err := sqlitex.ExecuteTransient(c, query, &sqlitex.ExecOptions{Args: args}); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+	}
+	exec(`INSERT INTO transactions (account_id, date, payee, amount) VALUES (?, '2026-08-29', 'Seed', -1);`, accountID)
+	seedTxn := c.LastInsertRowID()
+
+	for _, tt := range []struct {
+		table  string
+		insert string
+		args   []any
+	}{
+		{table: "categories", insert: `INSERT INTO categories (name) VALUES (?);`, args: []any{"Wine"}},
+		{table: "accounts", insert: `INSERT INTO accounts (name, type, currency) VALUES (?, 'checking', 'USD');`, args: []any{"Savings"}},
+		{
+			table:  "transactions",
+			insert: `INSERT INTO transactions (account_id, date, payee, amount) VALUES (?, '2026-08-29', 'Felipe Motta', -3642);`,
+			args:   []any{accountID},
+		},
+		{
+			table:  "splits",
+			insert: `INSERT INTO splits (transaction_id, amount) VALUES (?, -3642);`,
+			args:   []any{seedTxn},
+		},
+		{
+			table:  "reconciliations",
+			insert: `INSERT INTO reconciliations (account_id, statement_date, statement_balance) VALUES (?, '2026-08-31', 462317);`,
+			args:   []any{accountID},
+		},
+	} {
+		t.Run(tt.table, func(t *testing.T) {
+			exec(tt.insert, tt.args...)
+			first := c.LastInsertRowID()
+
+			exec(`DELETE FROM `+tt.table+` WHERE id = ?;`, first)
+
+			exec(tt.insert, tt.args...)
+			second := c.LastInsertRowID()
+
+			if second == first {
+				t.Fatalf("%s reused id %d after deletion", tt.table, first)
+			}
+			if second < first {
+				t.Fatalf("%s issued a decreasing id: %d then %d", tt.table, first, second)
+			}
+		})
+	}
+
+	// AUTOINCREMENT keeps its high-water marks here; its absence would mean the
+	// tables fell back to plain rowids.
+	q := `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence';`
+	if got := queryInt64(t, c, q); got != 1 {
+		t.Error("sqlite_sequence is missing; tables are not using AUTOINCREMENT")
 	}
 }
