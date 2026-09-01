@@ -10,6 +10,8 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +31,10 @@ const (
 	// ErrMissingDirectory is returned when the directory that would hold the
 	// database does not exist. Open never creates directories.
 	ErrMissingDirectory = cerrs.Error("database directory does not exist")
+
+	// ErrInvalidMemoryName is returned when a shared in-memory database is given
+	// a name that cannot be embedded in a URI.
+	ErrInvalidMemoryName = cerrs.Error("invalid in-memory database name")
 
 	// ErrForeignKeysDisabled is returned when a connection reaches a caller
 	// without foreign key enforcement.
@@ -58,6 +64,9 @@ type Store struct {
 // Open opens the database at path, creating it if it does not exist, and brings
 // its schema up to date.
 //
+// Open opens the file-backed database at path. Tests that do not need a file
+// should use OpenMemory instead.
+//
 // Open creates the database file but never creates directories. If the parent
 // directory does not exist, Open fails with ErrMissingDirectory rather than
 // making it: a typo in a path, or a test with a stray relative path, must not
@@ -79,9 +88,59 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("%s: %w", dir, ErrMissingDirectory)
 	}
 
-	pool := sqlitemigration.NewPool(path, schema, sqlitemigration.Options{
-		PoolSize:    PoolSize,
-		PrepareConn: prepareConn,
+	return open(ctx, path, path, PoolSize, false)
+}
+
+// OpenMemory opens an in-memory database. It touches no files and vanishes when
+// the Store is closed, which is what tests want.
+//
+// ZombieZen refuses a bare ":memory:" outright, because each connection in a pool
+// would silently get its own separate database. The two usable shapes are
+// selected by name:
+//
+//   - A non-empty name gives a SHARED database: every connection in the Store
+//     sees the same data, so the full pool is available and the Store behaves
+//     like the file-backed one. The name is process-wide, so two tests sharing a
+//     name share a database — pass something unique. t.Name() suits, but a
+//     subtest's name contains "/" and must be sanitized: names are limited to
+//     letters, digits, "-", "_", and "." so that a name can never introduce a
+//     URI query parameter and quietly turn the database into a file.
+//
+//   - An empty name gives a PRIVATE database, which cannot be shared between
+//     connections at all. The Store is therefore limited to a single connection.
+//     Use this for tests that never need concurrency; it cannot collide with
+//     anything.
+//
+// In-memory databases do not support WAL and report a journal mode of "memory".
+// That is expected here and is not treated as the misconfiguration it would be
+// for a file (see prepareConn). Foreign keys are enforced exactly as they are on
+// disk, so constraint behavior under test matches production.
+func OpenMemory(ctx context.Context, name string) (*Store, error) {
+	if name == "" {
+		// Private: unique so that nothing can accidentally reach it, and no
+		// cache=shared so each connection would get its own database — hence a
+		// pool of exactly one.
+		token, err := randomToken()
+		if err != nil {
+			return nil, err
+		}
+		uri := "file:mmm-private-" + token + "?mode=memory"
+		return open(ctx, uri, ":memory:", 1, true)
+	}
+
+	if !validMemoryName(name) {
+		return nil, fmt.Errorf("%q: %w", name, ErrInvalidMemoryName)
+	}
+	uri := "file:" + name + "?mode=memory&cache=shared"
+	return open(ctx, uri, ":memory:"+name, PoolSize, true)
+}
+
+// open builds a Store over uri. displayPath is what Path reports, poolSize is the
+// number of connections, and inMemory relaxes the WAL requirement.
+func open(ctx context.Context, uri, displayPath string, poolSize int, inMemory bool) (*Store, error) {
+	pool := sqlitemigration.NewPool(uri, schema, sqlitemigration.Options{
+		PoolSize:    poolSize,
+		PrepareConn: prepareConnFunc(inMemory),
 		// Flags is deliberately left zero. sqlitex then applies its defaults,
 		// which include sqlite.OpenWAL. Setting Flags here without repeating
 		// OpenWAL would silently drop WAL; prepareConn verifies it regardless.
@@ -93,11 +152,35 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	conn, err := pool.Get(ctx)
 	if err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", displayPath, err)
 	}
 	pool.Put(conn)
 
-	return &Store{path: path, pool: pool}, nil
+	return &Store{path: displayPath, pool: pool}, nil
+}
+
+// validMemoryName reports whether name is safe to embed in a database URI.
+// Anything that could introduce a query parameter is rejected.
+func validMemoryName(name string) bool {
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// randomToken returns a short hex string used to keep private in-memory
+// databases from colliding.
+func randomToken() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate database name: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // Path reports the database file this Store was opened from.
@@ -118,6 +201,11 @@ func (s *Store) Put(conn *sqlite.Conn) { s.pool.Put(conn) }
 // Close releases every connection in the pool.
 func (s *Store) Close() error { return s.pool.Close() }
 
+// prepareConnFunc builds the pool's connection setup hook.
+func prepareConnFunc(inMemory bool) func(*sqlite.Conn) error {
+	return func(conn *sqlite.Conn) error { return prepareConn(conn, inMemory) }
+}
+
 // prepareConn configures a connection and refuses to hand back one that is
 // misconfigured.
 //
@@ -128,7 +216,7 @@ func (s *Store) Close() error { return s.pool.Close() }
 // Both settings are verified rather than merely requested. A pragma that does
 // not take effect is silent -- foreign keys would simply stop being enforced --
 // and that is exactly the class of failure the register cannot afford.
-func prepareConn(conn *sqlite.Conn) error {
+func prepareConn(conn *sqlite.Conn, inMemory bool) error {
 	// SQLite defaults foreign key enforcement to OFF, per connection. The
 	// REFERENCES clauses in the schema are inert without this, which would let
 	// splits outlive the transaction they belong to.
@@ -137,9 +225,11 @@ func prepareConn(conn *sqlite.Conn) error {
 	}
 	// WAL lets a tab keep reading the register while another writes. It is a
 	// persistent property of the file, so this is a no-op after the first
-	// connection converts it.
-	if err := sqlitex.ExecuteTransient(conn, `PRAGMA journal_mode = WAL;`, nil); err != nil {
-		return fmt.Errorf("enable WAL: %w", err)
+	// connection converts it. In-memory databases do not support it at all.
+	if !inMemory {
+		if err := sqlitex.ExecuteTransient(conn, `PRAGMA journal_mode = WAL;`, nil); err != nil {
+			return fmt.Errorf("enable WAL: %w", err)
+		}
 	}
 
 	enforcing, err := pragmaInt(conn, `PRAGMA foreign_keys;`)
@@ -150,12 +240,16 @@ func prepareConn(conn *sqlite.Conn) error {
 		return ErrForeignKeysDisabled
 	}
 
-	mode, err := pragmaText(conn, `PRAGMA journal_mode;`)
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(mode, "wal") {
-		return fmt.Errorf("%w: %s", ErrJournalModeNotWAL, mode)
+	// Foreign keys are checked for every store; WAL only where it is possible,
+	// so that an in-memory test still exercises the same constraint behavior.
+	if !inMemory {
+		mode, err := pragmaText(conn, `PRAGMA journal_mode;`)
+		if err != nil {
+			return err
+		}
+		if !strings.EqualFold(mode, "wal") {
+			return fmt.Errorf("%w: %s", ErrJournalModeNotWAL, mode)
+		}
 	}
 
 	return nil

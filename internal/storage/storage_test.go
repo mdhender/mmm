@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -425,5 +426,195 @@ func TestConcurrentReadDuringWrite(t *testing.T) {
 	}
 	if got := queryInt64(t, reader, `SELECT count(*) FROM accounts;`); got != 2 {
 		t.Errorf("reader saw %d accounts after commit, want 2", got)
+	}
+}
+
+// memoryName turns a test name into one OpenMemory accepts: subtest names
+// contain "/", which is rejected so a name cannot smuggle in a URI parameter.
+func memoryName(t *testing.T) string {
+	t.Helper()
+	return strings.ReplaceAll(t.Name(), "/", "-")
+}
+
+// openMemory returns a shared in-memory Store named for the running test.
+func openMemory(t *testing.T, name string) *storage.Store {
+	t.Helper()
+	s, err := storage.OpenMemory(context.Background(), name)
+	if err != nil {
+		t.Fatalf("OpenMemory(%q): %v", name, err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// TestOpenMemoryMigrates confirms an in-memory store gets the same schema as a
+// file-backed one, in both shared and private modes.
+func TestOpenMemoryMigrates(t *testing.T) {
+	for _, name := range []string{memoryName(t), ""} {
+		mode := "shared"
+		if name == "" {
+			mode = "private"
+		}
+		t.Run(mode, func(t *testing.T) {
+			s := openMemory(t, name)
+			c, err := s.Conn(context.Background())
+			if err != nil {
+				t.Fatalf("Conn: %v", err)
+			}
+			defer s.Put(c)
+
+			for _, table := range []string{"accounts", "transactions", "splits", "categories", "reconciliations"} {
+				q := `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '` + table + `';`
+				if got := queryInt64(t, c, q); got != 1 {
+					t.Errorf("table %s: found %d, want 1", table, got)
+				}
+			}
+			if got := queryInt64(t, c, `PRAGMA application_id;`); got != int64(storage.AppID) {
+				t.Errorf("application_id = %#x, want %#x", got, storage.AppID)
+			}
+			// WAL is impossible in memory; the store must accept that rather
+			// than failing its journal_mode check.
+			if got := queryInt64(t, c, `PRAGMA foreign_keys;`); got != 1 {
+				t.Errorf("foreign_keys = %d, want 1 (constraints must behave as on disk)", got)
+			}
+		})
+	}
+}
+
+// TestOpenMemorySharedAcrossConnections confirms a named in-memory database is
+// one database, not one per connection -- the trap that makes bare ":memory:"
+// useless with a pool.
+func TestOpenMemorySharedAcrossConnections(t *testing.T) {
+	s := openMemory(t, memoryName(t))
+	ctx := context.Background()
+
+	writer, err := s.Conn(ctx)
+	if err != nil {
+		t.Fatalf("writer Conn: %v", err)
+	}
+	insertAccount(t, writer, "Checking", money.USD)
+	s.Put(writer)
+
+	// A different connection from the pool must see it. Hold several at once so
+	// this cannot be satisfied by getting the same connection back.
+	conns := make([]*sqlite.Conn, 0, 4)
+	defer func() {
+		for _, c := range conns {
+			s.Put(c)
+		}
+	}()
+	for i := 0; i < 4; i++ {
+		c, err := s.Conn(ctx)
+		if err != nil {
+			t.Fatalf("Conn %d: %v", i, err)
+		}
+		conns = append(conns, c)
+		if got := queryInt64(t, c, `SELECT count(*) FROM accounts;`); got != 1 {
+			t.Errorf("connection %d saw %d accounts, want 1", i, got)
+		}
+	}
+}
+
+// TestOpenMemoryIsolation confirms distinct names are distinct databases, and
+// that private stores cannot reach each other at all.
+func TestOpenMemoryIsolation(t *testing.T) {
+	t.Run("distinct names", func(t *testing.T) {
+		base := memoryName(t)
+		a, b := openMemory(t, base+"-a"), openMemory(t, base+"-b")
+		writeAndCompare(t, a, b)
+	})
+	t.Run("private stores", func(t *testing.T) {
+		a, b := openMemory(t, ""), openMemory(t, "")
+		writeAndCompare(t, a, b)
+	})
+}
+
+// writeAndCompare inserts into a and confirms b never sees it.
+func writeAndCompare(t *testing.T, a, b *storage.Store) {
+	t.Helper()
+	ctx := context.Background()
+
+	ca, err := a.Conn(ctx)
+	if err != nil {
+		t.Fatalf("a.Conn: %v", err)
+	}
+	insertAccount(t, ca, "Checking", money.USD)
+	a.Put(ca)
+
+	cb, err := b.Conn(ctx)
+	if err != nil {
+		t.Fatalf("b.Conn: %v", err)
+	}
+	defer b.Put(cb)
+	if got := queryInt64(t, cb, `SELECT count(*) FROM accounts;`); got != 0 {
+		t.Fatalf("second store saw %d accounts, want 0 (databases must be isolated)", got)
+	}
+}
+
+// TestOpenMemoryPrivateIsSingleConnection documents the cost of a private
+// database: it cannot be shared, so the pool holds exactly one connection and a
+// second borrow waits for the first to come back.
+func TestOpenMemoryPrivateIsSingleConnection(t *testing.T) {
+	s := openMemory(t, "")
+
+	first, err := s.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("first Conn: %v", err)
+	}
+	defer s.Put(first)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if second, err := s.Conn(ctx); err == nil {
+		s.Put(second)
+		t.Fatal("second connection was available from a private in-memory store")
+	}
+}
+
+// TestOpenMemoryRejectsUnsafeNames confirms a name cannot smuggle in URI query
+// parameters, which could quietly turn a test database into a file.
+func TestOpenMemoryRejectsUnsafeNames(t *testing.T) {
+	for _, name := range []string{
+		"has space",
+		"cache=shared&mode=rwc",
+		"../escape",
+		"query?mode=rwc",
+	} {
+		if s, err := storage.OpenMemory(context.Background(), name); !errors.Is(err, storage.ErrInvalidMemoryName) {
+			if err == nil {
+				s.Close()
+			}
+			t.Errorf("OpenMemory(%q) = %v, want ErrInvalidMemoryName", name, err)
+		}
+	}
+}
+
+// TestOpenMemoryTouchesNoFiles confirms an in-memory store leaves the working
+// directory alone.
+func TestOpenMemoryTouchesNoFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	shared := openMemory(t, "TouchesNoFiles")
+	private := openMemory(t, "")
+	for _, s := range []*storage.Store{shared, private} {
+		c, err := s.Conn(context.Background())
+		if err != nil {
+			t.Fatalf("Conn: %v", err)
+		}
+		insertAccount(t, c, "Checking-"+s.Path(), money.USD)
+		s.Put(c)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("in-memory stores created files: %v", names)
 	}
 }

@@ -77,8 +77,8 @@ reuse them rather than becoming a second application.
 - `internal/storage` — opens and migrates the SQLite database; owns the schema. `storage.Open(ctx,
   path)` returns a `*Store`; borrow connections with `Conn(ctx)` and always return them with
   `Put`. **`Pool.Close` blocks until every borrowed connection is returned** — a `defer
-  store.Close()` alongside a still-borrowed connection deadlocks. Also exports `BindMoney` /
-  `ColumnMoney`; see Storage below.
+  store.Close()` alongside a still-borrowed connection deadlocks. `OpenMemory` gives tests a
+  database that touches no files. Also exports `BindMoney` / `ColumnMoney`; see Storage below.
 - `internal/dotenv` — `dotenv.Load(env)` wraps `joho/godotenv`. `env` must be one of
   `development`, `test`, `production`, or `agents`; **`agents` is reserved for the coding agent's
   own local work**. Files load highest-precedence first: `.env.{env}.local`, `.env.local`,
@@ -117,6 +117,27 @@ Conventions the schema encodes:
   meaningful. `ColumnMoney` therefore takes the currency from the caller.
 - **Dates are `TEXT` in ISO 8601 `YYYY-MM-DD`**, which sorts chronologically as a string. A `GLOB`
   CHECK enforces the shape; impossible-but-well-formed dates are the domain layer's problem.
+
+### Testing against a database
+
+Use `storage.OpenMemory(ctx, name)`. It touches no files and vanishes on `Close`.
+
+ZombieZen rejects a bare `":memory:"` outright, and the reason is worth knowing: with a pool,
+each connection would silently get *its own separate database*. So the mode is chosen by name:
+
+- **Shared** (`name` non-empty) — one database behind the whole pool, so the Store behaves like
+  the file-backed one. The name is process-wide: two tests sharing a name share a database. Pass
+  something unique. `t.Name()` works, but **a subtest's name contains `/`**, which is rejected —
+  sanitize it (`strings.ReplaceAll(t.Name(), "/", "-")`). Names are restricted to letters, digits,
+  `-`, `_`, and `.` so a name can never inject a URI parameter and quietly turn the database into
+  a file on disk.
+- **Private** (`name` empty) — cannot be shared between connections at all, so the pool holds
+  exactly **one**. A second concurrent borrow blocks until the first is returned. Use it when the
+  test never needs concurrency; it cannot collide with anything.
+
+In-memory databases do not support WAL and report a journal mode of `memory`. `prepareConn`
+expects that for in-memory stores and skips the WAL check, but still enforces and verifies
+`foreign_keys`, so constraint behavior under test matches production.
 
 ### Concurrency and the multi-tab case
 
