@@ -1,0 +1,115 @@
+/* Copyright (c) 2026 Michael D Henderson.
+ *
+ * The whole stylesheet. It is meant to stay about this size: a register is a
+ * table, and a table needs alignment, a readable font, and enough contrast to
+ * tell a negative number from a positive one.
+ */
+
+:root {
+    --ink: #1c1c1c;
+    --muted: #6b6b6b;
+    --rule: #d8d5cd;
+    --paper: #fbfaf7;
+    --panel: #f2efe8;
+    --negative: #a11b1b;
+    --accent: #1c4f7c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Money and dates are columns of digits, so they get a font whose digits line
+   up. Everything else stays proportional. */
+.money, .date, .num, .status, code { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+a { color: var(--accent); }
+
+.topbar {
+    padding: .6rem 1rem;
+    border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+}
+.brand { font-weight: 600; text-decoration: none; color: var(--ink); }
+
+/* Default stretch alignment, so the divider beside the account list runs the
+   full height of the window rather than stopping under the last account. */
+.shell { display: flex; min-height: calc(100vh - 6rem); }
+
+.accounts {
+    flex: 0 0 14rem;
+    padding: 1rem;
+    border-right: 1px solid var(--rule);
+}
+.accounts h2 { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.accounts ul { list-style: none; margin: 0; padding: 0; }
+.accounts a {
+    display: block;
+    padding: .3rem .5rem;
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--ink);
+}
+.accounts a:hover { background: var(--panel); }
+.accounts a.active { background: var(--accent); color: #fff; font-weight: 600; }
+.accounts .closed { font-size: .75rem; color: var(--muted); }
+.accounts a.active .closed { color: #dfe8f0; }
+
+main { flex: 1 1 auto; padding: 1rem 1.5rem 2rem; min-width: 0; }
+
+.register-head h1 { margin: 0; font-size: 1.4rem; }
+.register-head .muted { margin: .15rem 0 1rem; }
+.muted { color: var(--muted); }
+
+table.register { width: 100%; border-collapse: collapse; }
+table.register th {
+    text-align: left;
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--rule);
+    padding: .35rem .5rem;
+}
+table.register td { padding: .35rem .5rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table.register tr:hover td { background: var(--panel); }
+
+th.money, td.money { text-align: right; white-space: nowrap; }
+th.status, td.status { text-align: center; width: 2rem; }
+th.date, td.date, th.num, td.num { white-space: nowrap; }
+td.memo, td.payee, td.category { overflow-wrap: anywhere; }
+.negative { color: var(--negative); }
+
+.empty { color: var(--muted); padding: 1.5rem 0; }
+
+.totals { display: flex; flex-wrap: wrap; gap: 2rem; margin: 1.25rem 0 0; }
+.totals div { min-width: 12rem; }
+.totals dt { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.totals dd { margin: .1rem 0 0; font-size: 1.05rem; }
+
+.next-step { padding: .6rem .8rem; background: var(--panel); border-left: 3px solid var(--accent); }
+
+.statusbar {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .5rem 1rem;
+    border-top: 1px solid var(--rule);
+    background: var(--panel);
+    font-size: .8rem;
+    color: var(--muted);
+}
+.statusbar code { color: var(--ink); }
+
+.visually-hidden {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%);
+    white-space: nowrap;
+}

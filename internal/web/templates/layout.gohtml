@@ -1,0 +1,53 @@
+{{- /*
+  The page frame: account list on the left, page content on the right, and the
+  database this window is editing named along the bottom (SPECIFICATION.md BK-3).
+
+  There is no JavaScript here yet. Everything on these pages is a link, and a
+  link already does what a script would have to be written to do. HTMX comes in
+  when the register grows interactions -- marking a row cleared, editing in
+  place -- that genuinely need part of a page replaced (TS-1, TS-4).
+*/ -}}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} &middot; Checkbook</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+    <a class="brand" href="/">Checkbook</a>
+</header>
+
+<div class="shell">
+    <nav class="accounts" aria-label="Accounts">
+        <h2>Accounts</h2>
+        {{if .Accounts}}
+            <ul>
+                {{range .Accounts}}
+                    <li>
+                        <a href="/accounts/{{.ID}}"
+                           class="{{if eq .ID $.ActiveID}}active{{end}}"
+                           {{if eq .ID $.ActiveID}}aria-current="page"{{end}}>
+                            {{.Name}}{{if .IsClosed}} <span class="closed" title="Closed {{.ClosedOn}}">closed</span>{{end}}
+                        </a>
+                    </li>
+                {{end}}
+            </ul>
+        {{else}}
+            <p class="muted">None yet.</p>
+        {{end}}
+    </nav>
+
+    <main>
+        {{template "main" .}}
+    </main>
+</div>
+
+<footer class="statusbar">
+    <span title="The file holding your records. Back this file up.">Database: <code>{{.Database}}</code></span>
+    <span class="version">v{{.Version}}</span>
+</footer>
+</body>
+</html>

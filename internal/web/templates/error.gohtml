@@ -1,0 +1,11 @@
+{{define "main"}}
+    {{- /* An error says what happened and what the reader can safely do next
+           (SPECIFICATION.md RG-4). The second half is not decoration: without it
+           the page is a dead end. */ -}}
+    <div class="register-head">
+        <h1>{{.Heading}}</h1>
+    </div>
+    <p>{{.Detail}}</p>
+    <p class="next-step"><strong>What to do next:</strong> {{.NextStep}}</p>
+    <p><a href="/">Back to the register</a></p>
+{{end}}

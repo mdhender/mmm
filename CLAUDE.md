@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-`mmm` is a local-first household **checkbook** written in Go. The repository is early: it has
-`MANIFESTO.md`, design notes under `docs/`, `version.go`, and two small support packages
-(`internal/cerrs`, `internal/dotenv`). There is no `cmd/`, domain package, or SQLite schema yet —
-code written here is largely creating the application, not modifying it.
+`mmm` is a local-first household **checkbook** written in Go. The repository is early. The
+storage layer, the domain packages behind the register, and a read-only web UI exist
+(`cmd/checkbook` serves it); entering, editing, importing, and reconciling do not. Much of the
+code written here is still creating the application rather than modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
 `RG-`, `RC-`, `IE-`, `BK-`, `CO-`, `PV-`, `TS-`, `RP-`, `SC-`). Check work against it and cite IDs
@@ -21,7 +21,8 @@ the specification, the specification wins.
 ```sh
 go build ./...                          # compile everything (no binary left behind)
 go run ./cmd/checkbook                  # run the web UI
-go run ./cmd/checkbook-tui              # run the terminal register
+go run ./cmd/checkbook -demo            # ... over sample data held in memory, touching no files
+go run ./cmd/checkbook-tui              # run the terminal register (not built yet)
 go test ./...                           # all tests
 go test -run TestName ./internal/pkg    # single test
 go vet ./...
@@ -74,6 +75,15 @@ reuse them rather than becoming a second application.
   functions in `functions.go`; every cross-value operation returns an `error` because mixing
   currencies is rejected rather than coerced. Never introduce a parallel float or `int` amount
   type — use this one. See `internal/money/README.md`.
+- `internal/account`, `internal/category`, `internal/transaction` — the domain packages behind the
+  register. They take a `*storage.Store`, return domain types, and import nothing from `net/http`
+  (TS-2), so the planned TUI and CLI use the same code. `transaction.LoadRegister(ctx, store,
+  acct)` is the register itself: entries ordered by date then id, each carrying its category, its
+  split count, and the running balance, plus the ending and cleared balances. **The running
+  balance is computed there, not in a template**, so every interface shows the same number.
+  `transaction.Create` writes a transaction and its splits in one database transaction and
+  rejects splits that do not total the amount.
+- `internal/web` — the browser interface; see Web UI below.
 - `internal/storage` — opens and migrates the SQLite database; owns the schema. `storage.Open(ctx,
   path)` returns a `*Store`; borrow connections with `Conn(ctx)` and always return them with
   `Put`. **`Pool.Close` blocks until every borrowed connection is returned** — a `defer
@@ -205,6 +215,42 @@ web application.
 `Open` never creates directories (ST-6): a path whose parent is missing fails with
 `ErrMissingDirectory` and leaves the filesystem untouched, so a stray relative path in a test
 cannot scatter folders across the tree.
+
+### Web UI
+
+`cmd/checkbook` opens a listener, opens the database, and serves `internal/web`. It **refuses a
+non-loopback `-host`** rather than trusting the flag: the register has no authentication by
+design (PL-7), which is only safe because it is unreachable from off the machine (PL-4). Only
+literal IPs and the name `localhost` are accepted, because resolving anything else could mean a
+DNS query and the program must run without a network (PL-3). `-port` defaults to 0, so the system
+picks a free port and the URL is printed; `-demo` serves a sample household from an in-memory
+store and writes nothing to disk.
+
+Shutdown order matters: `srv.Shutdown` runs **before** the store is closed, because
+`Pool.Close` blocks until every borrowed connection comes back and a handler still running holds
+one.
+
+`internal/web` is thin on purpose. It parses a request, asks a domain package, formats, and writes
+HTML. No SQL and no balance arithmetic belong here.
+
+- **Templates** live in `internal/web/templates` and are embedded. Each page is parsed into its
+  own set — `layout.gohtml` plus that page's file — because every page defines a template named
+  `main` and one set cannot hold two. A page is rendered **into a buffer first**; writing straight
+  to the `ResponseWriter` would commit a 200 and half a document before a template error could be
+  found.
+- **Formatting happens in Go, not in templates.** Handlers build a `registerPage` of ready
+  strings, so the template only places values. `formatAmount` groups the digits that
+  `money.Decimal()` produced and never recomputes them (CO-1).
+- **Calendar dates are printed exactly as stored** (ST-8, RG-5). Nothing in the UI converts a
+  transaction date. When instants do get displayed, the conversion belongs in the browser.
+- **Every error page says what happened and what to do next** (RG-4). `Server.fail` takes both,
+  and `errorPage.NextStep` is not optional — a page without it is a dead end. The catch-all
+  `GET /` route exists so a mistyped address gets one of these instead of net/http's bare 404.
+- **There is no JavaScript yet, and no HTMX.** A read-only register is links, and a link already
+  does what a script would have to be written to do. HTMX comes in when there are interactions
+  that genuinely need part of a page replaced — marking a row cleared, editing in place — and it
+  will be a vendored file, never a CDN (PL-3, TS-4).
+- **Do not add authentication, sessions, or CSRF tokens** (PL-7).
 
 ## Constraints that override normal defaults
 
