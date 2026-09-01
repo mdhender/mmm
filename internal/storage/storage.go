@@ -42,6 +42,18 @@ const (
 
 	// ErrJournalModeNotWAL is returned when a connection is not in WAL mode.
 	ErrJournalModeNotWAL = cerrs.Error("journal mode is not wal")
+
+	// ErrNotCheckbook is returned when the file is a SQLite database that this
+	// program did not create.
+	ErrNotCheckbook = cerrs.Error("file is not a checkbook database")
+
+	// ErrDatabaseTooNew is returned when the database carries a schema from a
+	// newer release than this one knows about.
+	ErrDatabaseTooNew = cerrs.Error("database was written by a newer version of the program")
+
+	// ErrSchemaVersion is returned when the schema is not at the version this
+	// program expects and is not simply newer.
+	ErrSchemaVersion = cerrs.Error("unexpected schema version")
 )
 
 // PoolSize is the number of connections the store keeps open.
@@ -152,11 +164,65 @@ func open(ctx context.Context, uri, displayPath string, poolSize int, inMemory b
 	conn, err := pool.Get(ctx)
 	if err != nil {
 		pool.Close()
+		return nil, fmt.Errorf("%s: %w", displayPath, classifyOpenError(err))
+	}
+
+	// The schema version is checked here, not left to sqlitemigration.
+	// sqlitemigration only ever migrates forwards: its loop runs while
+	// user_version is *below* the number of migrations, so a database written by
+	// a later release -- one carrying migrations this build has never heard of --
+	// falls straight through it and is opened as if nothing were wrong. The
+	// program would then run against a schema it does not understand, and the
+	// first symptom could be a query returning the wrong answer rather than an
+	// error. Refuse it here instead.
+	schemaVersion, verr := pragmaInt(conn, `PRAGMA user_version;`)
+	// Return the connection before closing the pool: Close blocks until every
+	// borrowed connection is back.
+	pool.Put(conn)
+	if verr != nil {
+		pool.Close()
+		return nil, fmt.Errorf("%s: %w", displayPath, verr)
+	}
+	if err := checkSchemaVersion(schemaVersion); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("%s: %w", displayPath, err)
 	}
-	pool.Put(conn)
 
 	return &Store{path: displayPath, pool: pool}, nil
+}
+
+// checkSchemaVersion compares the database's user_version against the number of
+// migrations this build carries.
+func checkSchemaVersion(schemaVersion int64) error {
+	want := int64(MigrationCount())
+	switch {
+	case schemaVersion > want:
+		return fmt.Errorf("%w: database is at schema %d, this program understands %d",
+			ErrDatabaseTooNew, schemaVersion, want)
+	case schemaVersion < want:
+		// Unreachable by way of a successful migration, so reaching it means
+		// something interrupted or rewrote the schema. It is not safe to guess.
+		return fmt.Errorf("%w: database is at schema %d, this program expects %d",
+			ErrSchemaVersion, schemaVersion, want)
+	}
+	return nil
+}
+
+// classifyOpenError turns sqlitemigration's failure into one this program's
+// callers can match on, so the UI can say something more useful than the raw
+// text.
+//
+// The application_id mismatch is recognized by its message because
+// sqlitemigration reports it as a plain error with no sentinel to compare
+// against. That is fragile, and deliberately not load-bearing: if the wording
+// ever changes the error simply stays generic, and the caller falls back to
+// "the database could not be opened". TestOpenRejectsForeignDatabase pins the
+// mapping so the change is noticed here rather than by a user.
+func classifyOpenError(err error) error {
+	if strings.Contains(err.Error(), "application_id") {
+		return fmt.Errorf("%w: %v", ErrNotCheckbook, err)
+	}
+	return err
 }
 
 // validMemoryName reports whether name is safe to embed in a database URI.

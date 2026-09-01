@@ -26,13 +26,28 @@ import (
 	"time"
 
 	"github.com/mdhender/mmm"
+	"github.com/mdhender/mmm/internal/cerrs"
 	"github.com/mdhender/mmm/internal/storage"
 	"github.com/mdhender/mmm/internal/web"
 )
 
+// errReported ends the program with a failing status when the reason has already
+// been shown to the user -- printed to the terminal and served as a page -- so
+// main does not repeat it.
+const errReported = cerrs.Error("already reported")
+
+// demoName names the in-memory database used by -demo; demoDatabase is what a
+// Store opened under that name reports as its path, and what the UI shows.
+const (
+	demoName     = "checkbook-demo"
+	demoDatabase = ":memory:" + demoName
+)
+
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "checkbook: %v\n", err)
+		if !errors.Is(err, errReported) {
+			fmt.Fprintf(os.Stderr, "checkbook: %v\n", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -75,18 +90,30 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, err := openStore(ctx, *dbPath, *demo)
-	if err != nil {
-		return err
-	}
-	// Pool.Close blocks until every borrowed connection is returned, so this
-	// must run after the server has finished its in-flight requests. The
-	// shutdown below does that before returning.
-	defer store.Close()
+	// A database that will not open is not a reason to exit in silence. On a
+	// desktop the program is started by double-clicking it and the terminal may
+	// not be visible at all, so the failure is served as a page in the browser
+	// that was going to be opened anyway. It is printed here too, for whoever
+	// does have a terminal.
+	var handler http.Handler
+	store, storeErr := openStore(ctx, *dbPath, *demo)
+	if storeErr != nil {
+		fmt.Fprintf(os.Stderr, "checkbook: %v\n", storeErr)
+		handler, err = web.NewProblem(
+			web.DescribeOpenError(storeErr, databaseName(*dbPath, *demo)),
+			version.Short())
+		if err != nil {
+			return err
+		}
+	} else {
+		// Pool.Close blocks until every borrowed connection is returned, so this
+		// must run after the server has finished its in-flight requests. The
+		// shutdown below does that before returning.
+		defer store.Close()
 
-	handler, err := web.New(store, version.Short(), log)
-	if err != nil {
-		return err
+		if handler, err = web.New(store, version.Short(), log); err != nil {
+			return err
+		}
 	}
 
 	srv := &http.Server{
@@ -100,8 +127,11 @@ func run() error {
 
 	url := "http://" + listener.Addr().String() + "/"
 	fmt.Printf("checkbook %s\n", version.Short())
-	fmt.Printf("database:  %s\n", store.Path())
-	if *demo {
+	fmt.Printf("database:  %s\n", databaseName(*dbPath, *demo))
+	switch {
+	case storeErr != nil:
+		fmt.Printf("           NOT OPENED -- the address below explains why\n")
+	case *demo:
 		fmt.Printf("           sample data, held in memory; nothing is written to disk\n")
 	}
 	fmt.Printf("register:  %s\n", url)
@@ -137,13 +167,30 @@ func run() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
-	return <-serveErr
+	if err := <-serveErr; err != nil {
+		return err
+	}
+	// The program ran, but it never opened the records it was asked for. Say so
+	// in the exit status; the reason is already on screen.
+	if storeErr != nil {
+		return errReported
+	}
+	return nil
+}
+
+// databaseName is what the program calls the database in its own output. It is
+// needed before the store exists, and when the store could not be built at all.
+func databaseName(path string, demo bool) string {
+	if demo {
+		return demoDatabase
+	}
+	return path
 }
 
 // openStore opens the database, or builds the in-memory sample when demo is set.
 func openStore(ctx context.Context, path string, demo bool) (*storage.Store, error) {
 	if demo {
-		store, err := storage.OpenMemory(ctx, "checkbook-demo")
+		store, err := storage.OpenMemory(ctx, demoName)
 		if err != nil {
 			return nil, fmt.Errorf("open sample database: %w", err)
 		}

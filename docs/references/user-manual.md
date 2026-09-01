@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.5.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.6.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -33,7 +33,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.5.0-beta
+checkbook 0.6.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:53219/
 press Ctrl+C to stop
@@ -69,9 +69,16 @@ All records live in one SQLite file.
 The file carries an application identifier of `0x4d4d4d20`. A SQLite file that does not carry it
 is refused, so the program cannot write its schema into an unrelated database.
 
-The schema is brought up to date when the file is opened. Schema changes are only ever applied
-forwards: a database is never migrated backwards, and a version of the program **older** than the
-one that last opened a file does not refuse it — it opens the file as it stands.
+The schema is brought up to date when the file is opened, and is only ever applied forwards. The
+schema version is checked against the version this build expects:
+
+| Database schema | Result |
+| --- | --- |
+| Behind this build | Brought up to date, then opened |
+| Equal to this build | Opened |
+| Ahead of this build | Refused. The program does not open a database written by a newer release. |
+
+A database is never migrated backwards.
 
 `-demo` uses a database held in memory. It is reported as `:memory:checkbook-demo` and is
 discarded when the program stops.
@@ -172,18 +179,39 @@ not a `GET` is refused with status 405.
 
 Accounts may be opened in several browser tabs at once.
 
+## When the database cannot be opened
+
+The program does not exit. It serves one page, at **every** address, reporting the problem, and
+opens the browser on it as usual. The page names the database, states what to do next, links to
+the relevant documents, and shows the underlying message.
+
+Every response is status **503** while the program is in this state, except `/static/app.css`,
+which is served normally so the page is legible. The register is not served at all; a bookmarked
+account address returns the same page.
+
+The failure is also printed to the terminal, and the startup banner reads `NOT OPENED` in place
+of the usual database line. When the program is stopped it exits with status 1.
+
+| Condition | Page heading |
+| --- | --- |
+| The database was written by a newer version of the program | This checkbook was written by a newer version of the program |
+| The file is a SQLite database this program did not create | That file is not a checkbook |
+| The directory named by `-db` does not exist | That folder does not exist |
+| The schema is behind the version this build expects | This checkbook's schema is not the one this version expects |
+| Any other failure to open the file | The checkbook could not be opened |
+
+In every case the database is left as it was found.
+
 ## Messages at startup
 
-The program exits with status 1 without opening the database or the listener when it prints any
-of the following.
+The program exits with status 1, without opening the database or the listener, when it prints
+either of the following. Neither can be reported in the browser, because there is no listener.
 
 | Message | Condition |
 | --- | --- |
 | `-host X is not a loopback address; the register is served only to this machine` | `-host` names an address reachable from another machine. |
 | `-host "X" is not a loopback address; use 127.0.0.1, ::1, or localhost` | `-host` is a name other than `localhost`. |
 | `listen on ADDR: ... bind: address already in use` | Another program, or another copy of this one, holds the port. |
-| `DIR: database directory does not exist` | The directory named by `-db` does not exist. Nothing is created. |
-| `PATH: ... database application_id = 0x0 (expected 0x4d4d4d20)` | The file is a SQLite database that this program did not create. |
 
 A browser that cannot be opened is reported as a warning; the program continues, and the address
 is on screen.

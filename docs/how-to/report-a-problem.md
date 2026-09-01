@@ -74,7 +74,7 @@ One problem per report. Put what went wrong in the title — "register shows the
 balance after a split", not "bug" — and paste this at the top of the body:
 
 ```text
-Version:     0.5.0-beta
+Version:     0.6.0-beta
 OS:          macOS 15.6
 Browser:     Safari 18.2      (only if the problem is on the page)
 Go:          go1.26.4
@@ -107,5 +107,5 @@ credibility.
 ## Related
 
 - [User manual](../references/user-manual.md) — the messages the program prints and what they mean
-- [How to upgrade the application](../how-to/upgrade-the-application.md) — including how to go back
-- [About mmm](what-is-mmm.md) — why there is no telemetry to report for you
+- [How to upgrade the application](upgrade-the-application.md) — including how to go back
+- [About mmm](../explanations/what-is-mmm.md) — why there is no telemetry to report for you

@@ -222,6 +222,29 @@ web application.
 `ErrMissingDirectory` and leaves the filesystem untouched, so a stray relative path in a test
 cannot scatter folders across the tree.
 
+`Open` also **verifies `user_version` against `MigrationCount()`** and refuses a mismatch
+(`ErrDatabaseTooNew`, `ErrSchemaVersion`). Do not remove this on the grounds that sqlitemigration
+already migrates: its loop runs only while `user_version` is *below* the migration count, so a
+database written by a later release falls straight through it and would be opened against a schema
+this build has never seen. The first symptom of that is a wrong answer, not an error.
+`ErrNotCheckbook` is recognized from sqlitemigration's `application_id` message — string matching,
+deliberately not load-bearing, pinned by `TestOpenRejectsForeignDatabase` so a wording change
+fails a test instead of degrading a user's page.
+
+### When the database will not open
+
+`cmd/checkbook` does not exit when `openStore` fails. It builds `web.NewProblem` from
+`web.DescribeOpenError` and serves that one page at **every** address with a 503, opens the
+browser on it, and exits 1 once stopped. The reason is PL-4's own premise: the program is started
+by double-clicking it, so a message printed to a terminal nobody is looking at is not a message.
+Only failures that prevent listening at all (a non-loopback `-host`, a port in use) still exit
+early, because there is then no way to serve the page.
+
+`DescribeOpenError` matches on **sentinels, not message text**, so a reworded underlying error
+cannot silently turn a specific page into a vague one; the unrecognized case still carries next
+steps. `problem.gohtml` is standalone and deliberately not built on `layout.gohtml` — the layout's
+frame is the account list, and there is no database to read one from.
+
 ### Web UI
 
 `cmd/checkbook` opens a listener, opens the database, and serves `internal/web`. It **refuses a

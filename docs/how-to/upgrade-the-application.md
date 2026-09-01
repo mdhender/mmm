@@ -11,8 +11,10 @@ Two facts shape everything below.
 it will; today that step is yours. Do not skip it.
 
 **A database is only ever upgraded, never downgraded.** Once a newer version has opened your file,
-an older version will not refuse it — it will open the file as it stands and may behave oddly
-rather than complain. Going back means going back to your backup, which is why you take one first.
+an older version will refuse to open it at all — it checks the schema version and stops rather
+than guess, showing you a page that says so. That refusal protects the file, but it does not give
+you a working checkbook: going back to an older version means going back to your backup, which is
+why you take one first.
 
 ## 1. Stop the program
 
@@ -90,7 +92,9 @@ If all three hold, the upgrade is done.
 
 ## If something is wrong
 
-Do not try to fix the database in place, and do not simply run the older version against it.
+Do not try to fix the database in place. Running the older version against the upgraded file will
+not damage it — the program refuses a database newer than itself — but it will not open it either,
+so it is not a way back.
 
 1. Stop the program.
 2. Move the current `checkbook.db` aside — rename it, do not delete it. It is evidence if you

@@ -107,7 +107,9 @@ func parsePages() (map[string]*template.Template, error) {
 	pages := make(map[string]*template.Template)
 	for _, name := range names {
 		base := name[len("templates/"):]
-		if base == layoutFile {
+		// The layout is not a page, and the problem page is not built on the
+		// layout: see problem.gohtml for why it stands alone.
+		if base == layoutFile || base == problemFile {
 			continue
 		}
 		t, err := template.New(layoutFile).ParseFS(templateFS, "templates/"+layoutFile, name)
@@ -125,7 +127,13 @@ func parsePages() (map[string]*template.Template, error) {
 	return pages, nil
 }
 
-const layoutFile = "layout.gohtml"
+const (
+	layoutFile = "layout.gohtml"
+
+	// problemFile is rendered by NewProblem when there is no database to serve a
+	// register from. It is parsed on its own, not with the layout.
+	problemFile = "problem.gohtml"
+)
 
 // layout is the part of a page that does not depend on which page it is. Every
 // page struct embeds it.

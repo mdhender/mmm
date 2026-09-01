@@ -5,6 +5,7 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,25 @@ func conn(t *testing.T, s *storage.Store) *sqlite.Conn {
 	}
 	t.Cleanup(func() { s.Put(c) })
 	return c
+}
+
+// setUserVersion writes the database's schema version.
+//
+// The connection is returned before this function returns, rather than at test
+// cleanup like conn does, because callers close the Store immediately afterwards
+// and Pool.Close blocks until every borrowed connection is back.
+func setUserVersion(t *testing.T, s *storage.Store, version int) {
+	t.Helper()
+	c, err := s.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	defer s.Put(c)
+
+	query := fmt.Sprintf(`PRAGMA user_version = %d;`, version)
+	if err := sqlitex.ExecuteTransient(c, query, nil); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
 }
 
 // queryInt64 runs a query expected to return exactly one integer.
@@ -159,6 +179,59 @@ func TestOpenRejectsForeignDatabase(t *testing.T) {
 		s.Close()
 		t.Fatal("Open succeeded on a database belonging to another application")
 	}
+	// The UI turns this into "that file is not a checkbook" rather than showing
+	// the raw error, so the classification has to hold. It is recognized from
+	// sqlitemigration's message; if that wording changes, this is where it
+	// should be noticed.
+	if !errors.Is(err, storage.ErrNotCheckbook) {
+		t.Fatalf("Open = %v, want ErrNotCheckbook", err)
+	}
+}
+
+// TestOpenRejectsNewerSchema is the guard against a silent downgrade.
+// sqlitemigration only migrates forwards, so a database carrying migrations this
+// build has never seen falls straight through its loop and would otherwise be
+// opened as though it were current.
+func TestOpenRejectsNewerSchema(t *testing.T) {
+	s, path, closeStore := open(t)
+
+	// Move the database ahead of this build, as a later release would.
+	setUserVersion(t, s, 99)
+	closeStore()
+
+	again, err := storage.Open(context.Background(), path)
+	if err == nil {
+		again.Close()
+		t.Fatal("Open succeeded on a database written by a newer version")
+	}
+	if !errors.Is(err, storage.ErrDatabaseTooNew) {
+		t.Fatalf("Open = %v, want ErrDatabaseTooNew", err)
+	}
+	// The message has to name both versions: it is the only way a reader can
+	// tell how far ahead the file is.
+	if !strings.Contains(err.Error(), "99") {
+		t.Errorf("error does not report the database schema version: %v", err)
+	}
+}
+
+// TestOpenRejectsSchemaBehind covers the other direction. It cannot happen after
+// a successful migration, so if it is ever seen the schema was interrupted or
+// rewritten, and guessing would be worse than refusing.
+func TestOpenRejectsSchemaBehind(t *testing.T) {
+	s, path, closeStore := open(t)
+
+	setUserVersion(t, s, 1)
+	closeStore()
+
+	again, err := storage.Open(context.Background(), path)
+	if err != nil {
+		// Migrations are append-only, so sqlitemigration will happily re-run
+		// migrations 2 and 3 over a database that already has them and fail. Any
+		// refusal is acceptable here; opening it silently is not.
+		return
+	}
+	again.Close()
+	t.Fatal("Open succeeded on a database whose schema version was moved backwards")
 }
 
 // TestForeignKeysEnforced confirms prepareConn turned enforcement on. SQLite
