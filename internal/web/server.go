@@ -162,6 +162,12 @@ type layout struct {
 	Accounts []account.Account
 	ActiveID int64
 
+	// ReturnTo is the address a control action sends the reader back to: the
+	// page they were on when they pressed it. It is only ever a page they could
+	// have arrived at by asking for it, so a form that failed does not offer to
+	// send them back to an address that only answers a POST.
+	ReturnTo string
+
 	// Notice reports something that happened to the checkbook rather than to
 	// the page in front of the reader: a backup written, a checkbook closed. It
 	// is in the frame rather than on a page because the actions that raise one
@@ -186,6 +192,7 @@ func (s *Server) pageLayout(r *http.Request, title string, accounts []account.Ac
 		Version:   s.version,
 		Accounts:  accounts,
 		ActiveID:  activeID,
+		ReturnTo:  returnTo(r),
 		Notice:    noticeFor(r),
 		Ephemeral: s.store.IsMemory(),
 	}

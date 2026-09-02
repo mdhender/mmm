@@ -39,6 +39,9 @@
 </header>
 
 <div class="shell">
+    {{- /* One column holding both sections: the accounts, and what can be done
+           to the checkbook they are in. */ -}}
+    <div class="sidebar">
     <nav class="accounts" aria-label="Accounts">
         <h2>Accounts</h2>
         {{if .Accounts}}
@@ -60,6 +63,27 @@
                every page, so this is how an account is added from anywhere. */ -}}
         <p class="add-account"><a href="/accounts/new">+ Add account</a></p>
     </nav>
+
+    {{- /* The second section: what can be done to the checkbook itself, as
+           opposed to what is in it. Import, Export and Reconcile land here too.
+
+           Flat named links rather than a File menu. A menubar's keyboard
+           semantics are a large surface to build and get right for four items
+           (TS-1, TS-4), and naming the items invites only the ones SC-3 lists.
+
+           Back up now is a form and not a link because it does something (BK-2).
+           A link would be fired by a prefetch, and the same-origin check in
+           control.go would have nothing to read. */ -}}
+    {{if not .Ephemeral}}
+    <nav class="checkbook-actions" aria-label="This checkbook">
+        <h2>This checkbook</h2>
+        <form method="post" action="/backup">
+            <input type="hidden" name="return" value="{{.ReturnTo}}">
+            <button type="submit" class="action">Back up now</button>
+        </form>
+    </nav>
+    {{end}}
+    </div>
 
     <main>
         {{- /* Something that happened to the checkbook rather than to this page:

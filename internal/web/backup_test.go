@@ -183,3 +183,39 @@ func TestBackupIsNotAGetRoute(t *testing.T) {
 		}
 	}
 }
+
+// TestBackUpNowIsOnEveryPage is BK-2: the action has to be visible, and the
+// frame is what makes it visible from wherever the reader happens to be.
+func TestBackUpNowIsOnEveryPage(t *testing.T) {
+	store, _ := openFile(t)
+	seed(t, store)
+	h := server(t, store)
+
+	for _, path := range []string{"/accounts/1", "/accounts/new", "/accounts/99"} {
+		body := get(t, h, path).Body.String()
+		if !strings.Contains(body, "This checkbook") {
+			t.Errorf("%s has no checkbook section in the frame", path)
+		}
+		if !strings.Contains(body, "Back up now") {
+			t.Errorf("%s does not offer Back up now (BK-2)", path)
+		}
+		// A form, not a link: a link would be fired by a prefetch, and the
+		// same-origin check would have nothing to read.
+		if !strings.Contains(body, `<form method="post" action="/backup">`) {
+			t.Errorf("%s offers Back up now as something other than a POST", path)
+		}
+	}
+}
+
+// TestBackUpNowIsWithheldFromTheDemo: the sample household has no file behind
+// it, and an action that can only be refused is worse than one that is not
+// offered.
+func TestBackUpNowIsWithheldFromTheDemo(t *testing.T) {
+	store := open(t)
+	seed(t, store)
+
+	body := get(t, server(t, store), "/accounts/1").Body.String()
+	if strings.Contains(body, "Back up now") {
+		t.Error("the demo offers to back up a database that is not on disk")
+	}
+}

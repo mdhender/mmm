@@ -85,7 +85,7 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 			"Go back to the register and press Back up now again.")
 		return
 	}
-	back := returnTo(r.PostForm.Get("return"))
+	back := safeReturn(r.PostForm.Get("return"))
 
 	path := s.store.Path()
 	if s.store.IsMemory() {
@@ -142,12 +142,25 @@ func (s *Server) backupFailed(w http.ResponseWriter, r *http.Request, path strin
 	}
 }
 
-// returnTo picks the page a control route sends the reader back to.
+// returnTo is the address to put in a control form, so pressing Back up now
+// leaves the reader on the page they pressed it from.
+//
+// Only a GET's address is offered. An error page rendered in answer to a POST is
+// at an address that answers nothing else, and sending somebody back to it would
+// turn a successful backup into a page that says there is nothing there.
+func returnTo(r *http.Request) string {
+	if r.Method != http.MethodGet {
+		return "/"
+	}
+	return safeReturn(r.URL.Path)
+}
+
+// safeReturn reads the address a control form posted back.
 //
 // Only a path on this server is accepted. The value comes from a form, and a
 // redirect that would take somebody off their own machine is not something this
 // program should ever emit.
-func returnTo(v string) string {
+func safeReturn(v string) string {
 	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") {
 		return "/"
 	}
