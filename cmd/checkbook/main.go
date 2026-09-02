@@ -133,6 +133,12 @@ func run() (browserOpened bool, err error) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// One more cancel on top of the signal's, handed to the browser's Quit. The
+	// select below then fires for both Ctrl+C and the button, and everything
+	// after it -- the shutdown, the drain, the close -- happens in exactly the
+	// same order either way.
+	ctx, quit := context.WithCancel(ctx)
+	defer quit()
 
 	// A database that will not open is not a reason to exit in silence. On a
 	// desktop the program is started by double-clicking it and the terminal may
@@ -160,6 +166,8 @@ func run() (browserOpened bool, err error) {
 		ui, err := web.New(web.Options{
 			Store:   store,
 			Open:    browserOpener(log),
+			Quit:    quit,
+			Restart: restartHint(flag.CommandLine),
 			Version: version.Short(),
 			Log:     log,
 		})
@@ -190,7 +198,7 @@ func run() (browserOpened bool, err error) {
 		fmt.Printf("           sample data, held in memory; nothing is written to disk\n")
 	}
 	fmt.Printf("register:  %s\n", url)
-	fmt.Printf("press Ctrl+C to stop\n")
+	fmt.Printf("press Ctrl+C to stop, or use Quit in the browser\n")
 
 	// Whether this succeeded decides where a later failure has to be reported.
 	// A browser showing the problem page has already told the reader what
@@ -215,6 +223,10 @@ func run() (browserOpened bool, err error) {
 
 	select {
 	case err := <-serveErr:
+		// Note that Shutdown does not run on this path, so a handler may still
+		// be in flight when the deferred close fires. It drains rather than
+		// hangs -- Pool.Close interrupts the connections it is waiting on --
+		// but the ordering guarantee below does not hold here.
 		return browserOpened, err
 	case <-ctx.Done():
 		fmt.Println("\nstopping")

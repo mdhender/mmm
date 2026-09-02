@@ -1,0 +1,85 @@
+{{- /*
+  The last thing the program writes.
+
+  The styles are inline, and that is not a preference. /static/app.css is a
+  second request, and by the time the browser makes it the server it would go to
+  has stopped. A page that reached the reader unstyled would be the program's
+  parting impression of itself.
+
+  Nothing here links anywhere on this server either, for the same reason.
+*/ -}}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Checkbook has stopped</title>
+    <style>
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #fbfaf7;
+            color: #1c1c1c;
+            font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        }
+        header {
+            padding: .6rem 1rem;
+            border-bottom: 1px solid #d8d5cd;
+            background: #f2efe8;
+            font-weight: 600;
+        }
+        main { max-width: 44rem; margin: 0 auto; padding: 2rem 1.5rem; }
+        h1 { font-size: 1.5rem; margin: 0 0 .75rem; }
+        h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #6b6b6b; margin: 1.75rem 0 .5rem; }
+        p.lead { margin: 0 0 1.25rem; }
+        p.muted { color: #6b6b6b; }
+        code {
+            font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+            font-variant-numeric: tabular-nums;
+        }
+        pre {
+            margin: 0 0 .5rem;
+            padding: .6rem .8rem;
+            background: #f2efe8;
+            border-left: 3px solid #1c4f7c;
+            overflow-x: auto;
+            font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        }
+        footer {
+            padding: .5rem 1rem;
+            border-top: 1px solid #d8d5cd;
+            background: #f2efe8;
+            font-size: .8rem;
+            color: #6b6b6b;
+        }
+    </style>
+</head>
+<body>
+<header>Checkbook</header>
+
+<main>
+    <h1>Checkbook has stopped</h1>
+
+    <p class="lead">
+        The program is no longer running and this window will not answer any more.
+        <strong>Your records were closed cleanly and nothing was changed.</strong>
+    </p>
+
+    {{if .Restart.Command}}
+        <h2>To start it again</h2>
+        <pre><code>{{.Restart.Command}}</code></pre>
+        {{if .Restart.Directory}}
+            <p class="muted">from <code>{{.Restart.Directory}}</code></p>
+        {{end}}
+    {{else}}
+        <h2>To start it again</h2>
+        <p>Start Checkbook the same way you started it this time.</p>
+    {{end}}
+
+    <p class="muted">You can close this tab.</p>
+</main>
+
+<footer>v{{.Version}}</footer>
+</body>
+</html>

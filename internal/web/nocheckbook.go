@@ -3,7 +3,6 @@
 package web
 
 import (
-	"bytes"
 	"net/http"
 	"strconv"
 	"strings"
@@ -98,20 +97,7 @@ func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, s
 		page.Path = closed
 	}
 
-	// Buffered like every other page: a template error must not arrive as a 200
-	// and half a document.
-	var buf bytes.Buffer
-	if err := s.noCheckbook.ExecuteTemplate(&buf, noCheckbookFile, page); err != nil {
-		s.log.Error("render page", "page", noCheckbookFile, "path", r.URL.Path, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	if _, err := buf.WriteTo(w); err != nil {
-		s.log.Debug("write page", "path", r.URL.Path, "err", err)
-	}
+	s.renderStandalone(w, r, status, noCheckbookFile, page)
 }
 
 // handleConfirmClose asks before closing (RG-3).

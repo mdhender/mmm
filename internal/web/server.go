@@ -74,6 +74,11 @@ type Options struct {
 	// Quit ends the program. Nil withholds it, for the same reason.
 	Quit func()
 
+	// Restart is how to start the program again, shown on the page the reader
+	// is left with after quitting. It is composed by the command, which is the
+	// only thing that knows how it was started, and printed here.
+	Restart RestartHint
+
 	// Version is shown in the footer, so a bug report can say which build
 	// produced a page.
 	Version string
@@ -108,15 +113,16 @@ type Server struct {
 
 	open    Opener
 	quit    func()
+	restart RestartHint
 	version string
 	log     *slog.Logger
 
 	mux   *http.ServeMux
 	pages map[string]*template.Template
 
-	// noCheckbook is parsed on its own, like the problem page: it is not built
-	// on the layout and so cannot live in pages.
-	noCheckbook *template.Template
+	// standalone holds the pages that are not built on the layout, each parsed
+	// on its own, so they cannot live in pages.
+	standalone map[string]*template.Template
 }
 
 // New builds a server.
@@ -133,20 +139,29 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	noCheckbook, err := template.New(noCheckbookFile).ParseFS(templateFS, "templates/"+noCheckbookFile)
-	if err != nil {
-		return nil, fmt.Errorf("web: parse %s: %w", noCheckbookFile, err)
+	standalone := make(map[string]*template.Template, len(standaloneFiles))
+	for _, name := range standaloneFiles {
+		if name == problemFile {
+			// NewProblem parses that one for itself, at the point it is needed.
+			continue
+		}
+		t, err := template.New(name).ParseFS(templateFS, "templates/"+name)
+		if err != nil {
+			return nil, fmt.Errorf("web: parse %s: %w", name, err)
+		}
+		standalone[name] = t
 	}
 
 	s := &Server{
 		open:    opts.Open,
 		quit:    opts.Quit,
+		restart: opts.Restart,
 		version: opts.Version,
 		log:     log,
 		mux:     http.NewServeMux(),
 		pages:   pages,
 
-		noCheckbook: noCheckbook,
+		standalone: standalone,
 	}
 	if opts.Store != nil {
 		s.adopt(opts.Store)
@@ -208,6 +223,10 @@ func (s *Server) routes() {
 	if s.open != nil {
 		s.mux.HandleFunc("POST /checkbook/open", s.control(s.handleOpen))
 	}
+	if s.quit != nil {
+		s.mux.HandleFunc("GET /quit", s.handleConfirmQuit)
+		s.mux.HandleFunc("POST /quit", s.control(s.handleQuit))
+	}
 
 	// The catch-all is last in precedence, not in registration: ServeMux picks
 	// the most specific pattern. It exists so a mistyped address gets a page
@@ -242,12 +261,9 @@ func parsePages() (map[string]*template.Template, error) {
 	pages := make(map[string]*template.Template)
 	for _, name := range names {
 		base := name[len("templates/"):]
-		// The layout is not a page, and two pages are not built on the layout:
-		// see problem.gohtml for why they stand alone. Leaving one out of this
-		// list would parse it against the layout, where it defines no "main"
-		// and fails at render time -- which is exactly what parsing here at
-		// startup exists to prevent.
-		if base == layoutFile || base == problemFile || base == noCheckbookFile {
+		// The layout is not a page, and several pages are not built on the
+		// layout: see problem.gohtml for why they stand alone.
+		if base == layoutFile || isStandalone(base) {
 			continue
 		}
 		t, err := template.New(layoutFile).ParseFS(templateFS, "templates/"+layoutFile, name)
@@ -276,7 +292,30 @@ const (
 	// alone for the same reason problemFile does: the layout frames a page with
 	// the account list and the database path, and there is neither.
 	noCheckbookFile = "no-checkbook.gohtml"
+
+	// quitFile asks before ending the program (RG-3), and goodbyeFile is what is
+	// on screen afterwards. Both stand alone, and goodbyeFile carries its styles
+	// inline: the stylesheet is a second request, and by the time the browser
+	// makes it there is nothing left to answer.
+	quitFile    = "quit.gohtml"
+	goodbyeFile = "goodbye.gohtml"
 )
+
+// standaloneFiles are the pages not built on the layout. parsePages skips them,
+// and New parses each on its own; a page left out of this list would be parsed
+// against the layout, define no "main", and fail at render time -- which is
+// exactly what parsing at startup exists to prevent.
+var standaloneFiles = []string{problemFile, noCheckbookFile, quitFile, goodbyeFile}
+
+// isStandalone reports whether base is one of them.
+func isStandalone(base string) bool {
+	for _, name := range standaloneFiles {
+		if base == name {
+			return true
+		}
+	}
+	return false
+}
 
 // layout is the part of a page that does not depend on which page it is. Every
 // page struct embeds it.
@@ -381,6 +420,35 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 		// but do not pretend the page arrived.
 		s.log.Debug("write page", "path", r.URL.Path, "err", err)
 	}
+}
+
+// renderStandalone writes one of the pages that is not built on the layout.
+//
+// Buffered like every other page: a template error must not arrive as a 200 and
+// half a document. It matters more here than anywhere else, because one of these
+// is the last thing the program writes before it stops.
+func (s *Server) renderStandalone(w http.ResponseWriter, r *http.Request, status int, name string, data any) bool {
+	t := s.standalone[name]
+	if t == nil {
+		s.log.Error("unknown template", "page", name, "path", r.URL.Path)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, name, data); err != nil {
+		s.log.Error("render page", "page", name, "path", r.URL.Path, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	if _, err := buf.WriteTo(w); err != nil {
+		s.log.Debug("write page", "path", r.URL.Path, "err", err)
+		return false
+	}
+	return true
 }
 
 // errorPage carries a failure to the reader.

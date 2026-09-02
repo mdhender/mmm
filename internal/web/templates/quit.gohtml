@@ -1,0 +1,55 @@
+{{- /*
+  Asks before ending the program (RG-3).
+
+  It stands alone rather than using layout.gohtml because it has to look the same
+  whether or not a checkbook is open: this is the one action that is not about
+  the records at all.
+*/ -}}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quit &middot; Checkbook</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+    <span class="brand">Checkbook</span>
+</header>
+
+<main class="problem">
+    <h1>Quit Checkbook?</h1>
+
+    <p class="lead">
+        This stops the program. Nothing is changed or deleted, and every record you have entered
+        is already written.
+    </p>
+
+    {{if .Database}}
+        <dl class="problem-facts">
+            <dt>Open</dt>
+            <dd><code>{{.Database}}</code></dd>
+        </dl>
+        <p>It is closed cleanly first, so the file is left ready to copy or back up.</p>
+    {{end}}
+
+    <p class="muted">
+        The window you are reading this in will stop working, along with any other window you have
+        open on the register.
+    </p>
+
+    <form method="post" action="/quit">
+        <div class="entry-fields">
+            <div class="f-add"><button type="submit">Quit</button></div>
+            <div class="f-add"><a class="cta" href="/">Keep going</a></div>
+        </div>
+    </form>
+</main>
+
+<footer class="statusbar">
+    <span>Still running</span>
+    <span class="version">v{{.Version}}</span>
+</footer>
+</body>
+</html>
