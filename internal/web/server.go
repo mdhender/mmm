@@ -76,6 +76,9 @@ func New(store *storage.Store, version string, log *slog.Logger) (*Server, error
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleRoot)
 	s.mux.HandleFunc("GET /accounts/{id}", s.handleRegister)
+	// The entry has its own address rather than a POST to the register's, so an
+	// unmatched method on a register URL still gets a 405 from the mux.
+	s.mux.HandleFunc("POST /accounts/{id}/transactions", s.handleCreateTransaction)
 	// The catch-all is last in precedence, not in registration: ServeMux picks
 	// the most specific pattern. It exists so a mistyped address gets a page
 	// that says what to do next rather than net/http's bare "404 page not

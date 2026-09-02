@@ -213,8 +213,9 @@ func TestErrorPagesSayWhatToDoNext(t *testing.T) {
 	}
 }
 
-// TestWriteMethodsAreRejected: nothing on these pages writes yet, and the mux
-// says so rather than a handler quietly treating a POST as a GET.
+// TestWriteMethodsAreRejected: the register's own address is read-only. Entry
+// has its own address, so an unmatched method here is refused by the mux rather
+// than by a handler that has to check.
 func TestWriteMethodsAreRejected(t *testing.T) {
 	store := open(t)
 	seed(t, store)

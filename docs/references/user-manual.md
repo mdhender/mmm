@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.10.1-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.11.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -9,7 +9,8 @@ version, see [How to upgrade the application](../how-to/upgrade-the-application.
 
 ## What this release does
 
-The program displays a check register from a local database file. It is **read-only**.
+The program displays a check register from a local database file, and accepts new transactions
+into it.
 
 It shows:
 
@@ -18,7 +19,12 @@ It shows:
 - the ending balance, the cleared balance, and the difference between them
 - the path of the database file in use
 
-It does not create or edit accounts, enter, change, or delete transactions, mark transactions
+It can:
+
+- enter a transaction into an account, with an optional category
+
+It does not create or edit accounts, change or delete transactions already entered, split a
+transaction among several categories, record a transfer between accounts, mark transactions
 cleared, reconcile, import, export, create backups, search, or produce reports. There is no
 terminal interface and no command-line subcommand.
 
@@ -33,7 +39,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.10.1-beta
+checkbook 0.11.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -186,6 +192,40 @@ Shown below the register, in the account's currency.
 
 An account with no transactions shows its opening balance as both the ending and cleared balance.
 
+### Entering a transaction
+
+Below the totals is a form that adds one transaction to the account on screen. A closed account
+does not accept entries.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| Date | Yes | A calendar date, `YYYY-MM-DD`. Defaults to today. |
+| Num | No | Check number. |
+| Payee | Yes | |
+| Category | No | Blank records no category, and the row reads `Uncategorized`. |
+| Memo | No | |
+| Payment | One of the two | Money leaving the account. |
+| Deposit | One of the two | Money arriving in the account. |
+
+**Amounts are typed without a sign.** The column decides the direction: an amount under Payment is
+recorded as negative, and one under Deposit as positive. Filling both, or neither, is refused. An
+amount more precise than the account's currency — a third decimal place in USD — is refused rather
+than rounded.
+
+A category name that already exists is reused, regardless of case: typing `groceries` when
+`Groceries` exists files the transaction under the existing category and does not create a second
+one. The stored spelling is not changed. A name that does not exist is created.
+
+A new transaction is always **uncleared**. Marking it cleared is not available in this release.
+
+On success the browser returns to the register, positioned on the new row, and the running
+balances and totals are recalculated. Reloading that page does not enter the transaction a second
+time.
+
+If the entry is refused, the register comes back with the entry still in the form and a message
+above it saying what was wrong and what to do about it. Nothing is written. The transaction and
+its category are written together or not at all.
+
 ### Status bar
 
 The path of the database file in use, and the program's version. Beside the version is a
@@ -199,10 +239,12 @@ contacts GitHub.
 | --- | --- |
 | `/` | Redirects to the first account. If the database has no accounts, a page saying so. |
 | `/accounts/N` | The register for account `N`. Stable: an account's number is never reassigned. |
+| `POST /accounts/N/transactions` | Enters a transaction into account `N`. Answers with a redirect back to the register. |
 | `/static/app.css` | The stylesheet. |
 
-Any other address returns a page reporting that the address is not served. Any request that is
-not a `GET` is refused with status 405.
+Any other address returns a page reporting that the address is not served. A method an address
+does not accept — anything but `GET` on a register, anything but `POST` on the entry address — is
+refused with status 405.
 
 Accounts may be opened in several browser tabs at once, and more than one copy of the program may
 run at the same time, including on the same database, provided each is given its own `-port`. SQLite coordinates their access to the file.
@@ -265,6 +307,8 @@ is on screen.
 | The account number does not exist in this database | 404 |
 | The address is not served | 404 |
 | The database cannot be read | 500 |
+| An entry is refused; the register returns with the entry still in the form | 422 |
+| An entry is addressed to a closed account | 409 |
 
 Each of these pages states what happened and what to do next, and links back to the register.
 

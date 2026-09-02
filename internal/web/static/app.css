@@ -94,6 +94,45 @@ td.memo, td.payee, td.category { overflow-wrap: anywhere; }
 
 .next-step { padding: .6rem .8rem; background: var(--panel); border-left: 3px solid var(--accent); }
 
+/* The entry form. It sits under the register and reads left to right in the
+   order a paper register is filled in, with Payment and Deposit as the two
+   money columns they are on paper. */
+.entry { margin: 2rem 0 0; padding-top: 1.25rem; border-top: 1px solid var(--rule); }
+.entry h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 .6rem; }
+.entry-error {
+    margin: 0 0 .75rem;
+    padding: .6rem .8rem;
+    background: var(--panel);
+    border-left: 3px solid var(--negative);
+    color: var(--ink);
+}
+.entry-fields { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: end; }
+.entry-fields label { display: flex; flex-direction: column; gap: .2rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.entry-fields input {
+    font: inherit;
+    padding: .3rem .4rem;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink);
+    text-transform: none;
+    letter-spacing: normal;
+}
+.entry-fields input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.entry-fields input.money { text-align: right; }
+.f-date input, .f-payment input, .f-deposit input { width: 7rem; }
+.f-num input { width: 4.5rem; }
+.f-payee input, .f-category input, .f-memo input { width: 11rem; }
+.entry-fields button {
+    font: inherit;
+    padding: .35rem 1.1rem;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--paper);
+    cursor: pointer;
+}
+.entry-fields button:hover { background: var(--ink); border-color: var(--ink); }
+.entry-note { margin: .6rem 0 0; font-size: .8rem; }
+
 .statusbar {
     display: flex;
     justify-content: space-between;

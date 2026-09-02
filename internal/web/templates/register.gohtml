@@ -62,4 +62,60 @@
             </dd>
         </div>
     </dl>
+
+    {{- /* The entry form sits on the register, not behind another click: the
+           register is the primary screen (RG-1). It is deliberately outside the
+           table's {{if .Rows}}, so an account with no transactions can take its
+           first one.
+
+           A plain form POST, with no HTMX and no script. Adding a row changes
+           the running balance of every row below it, so there is no part of the
+           page to swap and a full re-render is the honest answer. The POST
+           redirects, which is what stops a reload entering the same
+           transaction twice (SC-4). */ -}}
+    <form class="entry" method="post" action="/accounts/{{.Account.ID}}/transactions">
+        <h2>Add a transaction</h2>
+
+        {{if .FormError}}
+            {{- /* Says what happened and what to do next, like every other
+                   failure the program reports (RG-4). */ -}}
+            <p class="entry-error" role="alert">{{.FormError}}</p>
+        {{end}}
+
+        <div class="entry-fields">
+            <label class="f-date">Date
+                <input type="text" name="date" value="{{.Form.Date}}"
+                       inputmode="numeric" placeholder="YYYY-MM-DD" required>
+            </label>
+            <label class="f-num">Num
+                <input type="text" name="check_number" value="{{.Form.CheckNumber}}" inputmode="numeric">
+            </label>
+            <label class="f-payee">Payee
+                <input type="text" name="payee" value="{{.Form.Payee}}" required>
+            </label>
+            <label class="f-category">Category
+                <input type="text" name="category" value="{{.Form.Category}}"
+                       placeholder="Uncategorized">
+            </label>
+            <label class="f-memo">Memo
+                <input type="text" name="memo" value="{{.Form.Memo}}">
+            </label>
+            {{- /* Two boxes, as on a paper register. The box says which way the
+                   money went, so no sign is typed and none can be forgotten. */ -}}
+            <label class="f-payment">Payment
+                <input type="text" name="payment" value="{{.Form.Payment}}"
+                       inputmode="decimal" class="money">
+            </label>
+            <label class="f-deposit">Deposit
+                <input type="text" name="deposit" value="{{.Form.Deposit}}"
+                       inputmode="decimal" class="money">
+            </label>
+            <div class="f-add">
+                <button type="submit">Add</button>
+            </div>
+        </div>
+        <p class="muted entry-note">
+            Amounts are in {{.Currency}}, without a sign. A new entry is uncleared until the bank shows it.
+        </p>
+    </form>
 {{end}}

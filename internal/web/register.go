@@ -3,7 +3,6 @@
 package web
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 
@@ -30,6 +29,14 @@ type registerPage struct {
 	Cleared        string
 	Uncleared      string
 	UnclearedCount int
+
+	// Form is the entry form under the table, holding whatever was last typed
+	// so a refused entry comes back with the reader's work still in it.
+	Form entryForm
+
+	// FormError is shown above the form. It is empty on a register nobody has
+	// just tried to write to.
+	FormError string
 }
 
 // registerRow is one line of the register.
@@ -105,34 +112,21 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.fail(w, r, http.StatusNotFound, accounts,
-			"That is not an account address",
-			"The address "+r.URL.Path+" does not name an account. An account address looks like /accounts/1.",
-			"Choose an account from the list on the left.")
+	acct, ok := s.accountFor(w, r, accounts)
+	if !ok {
 		return
 	}
 
-	acct, err := account.Get(r.Context(), s.store, id)
-	if err != nil {
-		if errors.Is(err, account.ErrNotFound) {
-			// Ids are never reused (ST-9), so a missing one means the account was
-			// deleted, not that it turned into a different account. Say so.
-			s.fail(w, r, http.StatusNotFound, accounts,
-				"No such account",
-				"There is no account numbered "+strconv.FormatInt(id, 10)+" in this database. A bookmark or an open tab may be pointing at an account that was removed.",
-				"Choose an account from the list on the left.")
-			return
-		}
-		s.log.Error("get account", "id", id, "err", err)
-		s.fail(w, r, http.StatusInternalServerError, accounts,
-			"That account could not be read",
-			"The database reported an error while reading account "+strconv.FormatInt(id, 10)+".",
-			"Reload this page. If it keeps failing, open the database file with another SQLite tool to check it, and restore your most recent backup if it is damaged.")
-		return
-	}
+	s.renderRegister(w, r, http.StatusOK, accounts, acct, blankEntryForm(), "")
+}
 
+// renderRegister reads acct's register and writes the page, carrying form and
+// formError into the entry form beneath the table.
+//
+// Both the register handler and the entry handler end here, so a refused entry
+// comes back on the same page it was typed on, with the same balances, rather
+// than on a page of its own that would have to be kept in step with this one.
+func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status int, accounts []account.Account, acct account.Account, form entryForm, formError string) {
 	reg, err := transaction.LoadRegister(r.Context(), s.store, acct)
 	if err != nil {
 		s.log.Error("load register", "account", acct.Name, "err", err)
@@ -143,13 +137,17 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.render(w, r, http.StatusOK, "register.gohtml", buildRegisterPage(layout{
+	page := buildRegisterPage(layout{
 		Title:    acct.Name,
 		Database: s.store.Path(),
 		Version:  s.version,
 		Accounts: accounts,
 		ActiveID: acct.ID,
-	}, reg))
+	}, reg)
+	page.Form = form
+	page.FormError = formError
+
+	s.render(w, r, status, "register.gohtml", page)
 }
 
 // buildRegisterPage formats a register for display. It is separate from the
