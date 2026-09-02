@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -240,4 +241,115 @@ func TestOpenStillCreatesACheckbookInAnEmptyFile(t *testing.T) {
 		t.Fatalf("Open on an empty file: %v", err)
 	}
 	_ = store.Close()
+}
+
+// The two tests below are about the same rule from two directions, and it is
+// worth stating once: when the pool underneath cannot be opened at all, Open
+// must report the reason rather than wait.
+//
+// sqlitemigration.Pool.Take waits for the initial migration, feeding a retry
+// channel every five seconds for as long as its context lasts. A failed
+// migration is returned at once. A failed *open* is not returned at all: the
+// pool logs it and tries again, forever, so Open never fails. Started from the
+// browser that is a listener which accepts and never answers.
+//
+// TestOpenRefusesAFileThatIsNotADatabaseAtOnce covers the case caught before the
+// pool is ever built. These two cover the cases that cannot be: a perfectly good
+// database that will not open *now*.
+
+// TestOpenReportsAFileItCannotOpenRatherThanRetryingForever is the cheap half of
+// that rule, and the one that catches a regression quickly: sqlite3_open_v2
+// fails at once here, so the deadline can be tight.
+//
+// A directory standing where the database should be is the trigger, because it
+// fails the same way every time. The obvious alternative -- a file this process
+// is not allowed to read -- is worse in a test: the abandoned pool is still
+// retrying in the background, and the moment the mode is restored it succeeds
+// and writes a -wal into a directory the test framework is trying to remove.
+func TestOpenReportsAFileItCannotOpenRatherThanRetryingForever(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checkbook.db")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	_, err := storage.Open(ctx, path)
+	assertReportedNotWaited(t, ctx, err, "unable to open database file")
+}
+
+// TestOpenReportsALockedDatabaseRatherThanRetryingForever is the case the header
+// check cannot see: the file is a checkbook, and another process is holding it.
+//
+// Two copies of this program on one database are allowed by design, so this is
+// not a hypothetical. It matters more than it looks: POST /checkbook/open calls
+// Open with the request's context, which for a browser that stays connected has
+// no bound, and it does so holding the control lock -- so a wait here would
+// block Close and Quit behind it for as long as the tab was open.
+//
+// It takes about ten seconds, which is not slowness to be tuned away: it is the
+// busy timeout sqlite.OpenConn sets around the WAL pragma it runs at open time,
+// and waiting it out is the correct behaviour. What is being pinned is that the
+// wait ends.
+func TestOpenReportsALockedDatabaseRatherThanRetryingForever(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checkbook.db")
+	store, err := storage.Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A connection holding the file in exclusive locking mode with a write in
+	// progress: what another copy of the program part-way through something long
+	// looks like from outside.
+	holder, err := sqlite.OpenConn(path, sqlite.OpenReadWrite)
+	if err != nil {
+		t.Fatalf("open the holding connection: %v", err)
+	}
+	defer holder.Close()
+	for _, stmt := range []string{
+		`PRAGMA locking_mode=exclusive;`,
+		`BEGIN IMMEDIATE;`,
+		`CREATE TABLE holding_the_lock (x);`,
+	} {
+		if err := sqlitex.ExecuteTransient(holder, stmt, nil); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+
+	// Far longer than the one busy timeout this should cost, and far shorter
+	// than forever. A regression fails here rather than hanging the suite.
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err = storage.Open(ctx, path)
+	assertReportedNotWaited(t, ctx, err, "locked")
+	t.Logf("Open reported a locked database after %s", time.Since(start).Round(time.Millisecond))
+}
+
+// assertReportedNotWaited checks that Open answered on its own rather than by
+// running out of context, and that what it answered names the cause.
+//
+// The second half is the point of recording the error the pool reported: the
+// retry loop is stopped by cancelling, and without the substitution the reader
+// would be told "context canceled", which is true of nothing they did.
+func assertReportedNotWaited(t *testing.T, ctx context.Context, err error, want string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("Open succeeded on a database it could not open")
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("Open waited for its context rather than reporting: %v", err)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Open reported the cancellation rather than the cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %v, want it to mention %q", err, want)
+	}
 }

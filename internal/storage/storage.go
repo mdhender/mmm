@@ -424,12 +424,76 @@ func checkReadOnlySchemaVersion(schemaVersion int64) error {
 	return nil
 }
 
+// openFailure turns a pool that will never open into an error, and is the reason
+// open does not simply hand its context to Get.
+//
+// sqlitemigration.Pool.Take waits for the initial migration, feeding a retry
+// channel every five seconds for as long as its context lasts. Two failures
+// reach it very differently. A failed *migration* is returned at once: the
+// pool's goroutine gives up, closes ready, and Take reports it. A failed *open*
+// -- sqlitex.NewPool, which is ten eager sqlite.OpenConn calls -- is not
+// returned at all. The pool logs it through OnError and tries again, forever, so
+// Take never returns and Open never fails. What the household sees is a listener
+// that accepts and never answers, which is the worst possible response to the
+// one emergency this program has.
+//
+// refuseBackup catches the common case, a file that is not a database at all,
+// before the pool is built. It cannot catch every one: a database this process
+// cannot open because of its permissions, or because another process holds a
+// lock past the ten-second timeout sqlite.OpenConn sets around its WAL pragma,
+// is a perfectly good database that will not open now. This is the backstop for
+// those.
+//
+// OnError is what makes the two cases distinguishable from outside, because a
+// migration failure never reaches it. So the first report means the retry loop,
+// and the retry loop has no end: cancel, and answer with what was reported. A
+// deadline would have been the obvious alternative and is worse -- it would put
+// a guess on how long a large database may take to migrate, and would report
+// "context deadline exceeded" in place of the cause.
+//
+// stop is set before the pool is built and never again, because report runs on
+// the pool's own goroutine and may run before NewPool has returned. first is
+// guarded, for the same reason.
+type openFailure struct {
+	stop context.CancelFunc
+
+	mu    sync.Mutex
+	first error
+}
+
+// report records the first failure and stops waiting for a pool that will not
+// open. Later reports are kept out: the first is the cause, and the ones after
+// it are the same failure being retried.
+func (f *openFailure) report(err error) {
+	f.mu.Lock()
+	if f.first == nil {
+		f.first = err
+	}
+	f.mu.Unlock()
+	f.stop()
+}
+
+// err reports what was recorded, or nil.
+func (f *openFailure) err() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.first
+}
+
 // open builds a Store over uri. displayPath is what Path reports, poolSize is the
 // number of connections, and inMemory relaxes the WAL requirement.
 func open(ctx context.Context, uri, displayPath string, poolSize int, inMemory bool) (*Store, error) {
+	// Both of these are in place before NewPool, which starts the goroutine that
+	// calls report -- possibly before this function reaches its next line. See
+	// openFailure for what it is doing.
+	getCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	failure := &openFailure{stop: cancel}
+
 	pool := sqlitemigration.NewPool(uri, schema, sqlitemigration.Options{
 		PoolSize:    poolSize,
 		PrepareConn: prepareConnFunc(inMemory, false),
+		OnError:     failure.report,
 		// Flags is deliberately left zero. sqlitex then applies its defaults,
 		// which include sqlite.OpenWAL. Setting Flags here without repeating
 		// OpenWAL would silently drop WAL; prepareConn verifies it regardless.
@@ -438,9 +502,26 @@ func open(ctx context.Context, uri, displayPath string, poolSize int, inMemory b
 	// Borrowing a connection waits for migration to complete and reports any
 	// error it hit. Without this, Open would succeed on a database it could
 	// never actually use.
-	conn, err := pool.Get(ctx)
+	conn, err := pool.Get(getCtx)
 	if err != nil {
-		pool.Close()
+		if reported := failure.err(); reported != nil {
+			// The cause, rather than the cancellation it produced. Take's select
+			// picks at random when both the pool and the context are ready, so
+			// without this a genuine error could surface as "context canceled".
+			err = reported
+
+			// Closed off this goroutine, and only here. Close waits for the
+			// pool's goroutine, and that goroutine is part-way through another
+			// attempt: Take feeds the retry channel before it waits, so the
+			// abandoned pool has already begun one more round of ten OpenConn
+			// calls. Waiting for it would double the time this takes -- against
+			// a locked database, two ten-second busy timeouts rather than one --
+			// and the caller has nothing left to do with the pool. It shuts
+			// itself down; the wait was the only thing being paid for.
+			go func() { _ = pool.Close() }()
+		} else {
+			pool.Close()
+		}
 		return nil, fmt.Errorf("%s: %w", displayPath, classifyOpenError(err))
 	}
 

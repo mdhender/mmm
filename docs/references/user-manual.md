@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.21.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.21.1-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see

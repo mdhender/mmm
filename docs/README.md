@@ -73,6 +73,8 @@ the specification wins:
 - [sqlite-store.md](sqlite-store.md), [data-imports.md](data-imports.md),
   [reconciliation.md](reconciliation.md)
 - [restore-from-backup.md](restore-from-backup.md) — the one-press restore, built in 0.21.0-beta
+- [zombiezen-pool-open-hanging.md](zombiezen-pool-open-hanging.md) — why `storage.Open` refuses a
+  file before the migrating pool sees it, and what the pool does when it cannot open one
 - [local-web-ui.md](local-web-ui.md), [htmx-web-ui.md](htmx-web-ui.md),
   [local-text-ui.md](local-text-ui.md)
 - [inspiration.md](inspiration.md)

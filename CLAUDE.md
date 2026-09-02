@@ -150,14 +150,27 @@ the question used to leave a file in the household's folder and to fail outright
 cannot be written to — which `Replace` and `Find` both do routinely. The offsets are fixed by
 SQLite's file format.
 
-`refuseBackup` also refuses **a file that has bytes and is not a SQLite database at all**, and that
-branch is load-bearing rather than tidy. `sqlitemigration.Pool.Take` retries a pool it could not
-open every five seconds for as long as its context lasts, and `sqlitex.NewPool` failing is one of
-the cases it retries rather than reports — so `storage.Open` on a truncated or overwritten
-checkbook does not fail, it **hangs**, and the browser gets a listener that accepts and never
-answers. That is the worst possible response to the one emergency this program has, so the file is
-asked what it is before sqlitemigration sees it. An **empty** file still opens, because SQLite will
-initialize one. `TestOpenRefusesAFileThatIsNotADatabaseAtOnce` pins the deadline.
+**`storage.Open` must never wait on a pool that will not open**, and two things enforce it.
+
+`sqlitemigration.Pool.Take` retries a pool it could not open every five seconds for as long as its
+context lasts. A failed *migration* is returned at once; a failed **open** is not returned at all —
+`sqlitex.NewPool` failing is logged through `OnError` and retried — so `Open` on a truncated or
+overwritten checkbook does not fail, it **hangs**, and the browser gets a listener that accepts and
+never answers. Worse, `POST /checkbook/open` calls `Open` with the request's context, which has no
+bound, **while holding `ctl`** — so the wait blocks Close and Quit too.
+
+`refuseBackup` catches the common case, a file that has bytes and is not a SQLite database, before
+the pool is built. An **empty** file still opens, because SQLite will initialize one.
+`openFailure` is the backstop for what a header cannot see: a good database that will not open
+*now* — permissions, a directory in the way, a lock held past the ten-second busy timeout
+`sqlite.OpenConn` already sets around its WAL pragma. `OnError` is what makes this possible without
+a deadline: a migration failure never reaches it, so its first call **proves** the retry loop
+rather than slow honest work. Record, cancel, and report the recorded error — not the cancellation,
+since `Take`'s `select` picks at random when both are ready. **Do not replace this with a timeout**;
+it would guess at how long a large migration may take, and answer with `DescribeOpenError`'s
+catch-all instead of the sentinel. A pool abandoned to the loop is closed **off the calling
+goroutine**, because `Close` waits for a retry attempt already in flight and would double the wait.
+See `docs/zombiezen-pool-open-hanging.md` for the measurements and the upstream line numbers.
 
 The check is `refuseBackup`, called from `Open` **before the pool is built**. Reaching
 sqlitemigration is already too late: it would migrate the file. It reads the header on a connection
