@@ -38,6 +38,12 @@ type checkbook struct {
 	inMemory bool
 	readOnly bool
 
+	// isBackup says the file is one of this program's backups rather than a
+	// checkbook that happens to be open read-only. It is what lets the frame
+	// say which of the two the reader is looking at, and what lets the page
+	// after closing offer to restore it rather than to back it up again.
+	isBackup bool
+
 	// gen distinguishes this checkbook from any other opened in this run, so a
 	// button pressed in a tab that has been on screen since before a swap is
 	// refused rather than applied to a database it was never looking at. It is
@@ -90,6 +96,7 @@ func (s *Server) adopt(store *storage.Store) (*checkbook, *checkbook) {
 		path:     store.Path(),
 		inMemory: store.IsMemory(),
 		readOnly: store.ReadOnly(),
+		isBackup: store.IsBackup(),
 		gen:      s.gen,
 	}
 	previous := s.current
@@ -116,6 +123,7 @@ func (s *Server) retire(gen uint64) (*checkbook, bool) {
 	s.current = nil
 	s.closedPath = cb.path
 	s.closedInMemory = cb.inMemory
+	s.closedIsBackup = cb.isBackup
 	return cb, true
 }
 
@@ -169,11 +177,12 @@ func (s *Server) closedUnderneath(cb *checkbook) bool {
 }
 
 // closedCheckbook reports the database that was closed most recently, so the
-// page the reader lands on can name it and offer to back it up or open it again.
-func (s *Server) closedCheckbook() (path string, inMemory bool) {
+// page the reader lands on can name it and offer the right thing to do with it:
+// back it up, open it again, or -- if it was a backup being read -- restore it.
+func (s *Server) closedCheckbook() (path string, inMemory, isBackup bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.closedPath, s.closedInMemory
+	return s.closedPath, s.closedInMemory, s.closedIsBackup
 }
 
 // dbFailed answers a database error hit while holding a lease on cb.
@@ -209,10 +218,14 @@ type checkbookHandler func(http.ResponseWriter, *http.Request, *checkbook)
 func (s *Server) withWritableCheckbook(h checkbookHandler) http.HandlerFunc {
 	return s.withCheckbook(func(w http.ResponseWriter, r *http.Request, cb *checkbook) {
 		if cb.readOnly {
+			detail := cb.path + " was opened read-only, which is how a backup is looked at without being changed. Nothing was written."
+			next := "To make changes, close this and open the checkbook you keep your records in. To work from this file, close it and restore it to a new name."
+			if cb.isBackup {
+				detail = cb.path + " is a backup. It can be read and it can be restored, but it is never written to: the moment it were, it would stop being the copy that was taken. Nothing was written."
+				next = "To make changes, close this and open the checkbook you keep your records in. To work from these records, close this and restore the backup — that copies it to a new file and brings the copy up to date, leaving the backup as it is."
+			}
 			s.fail(w, r, cb, http.StatusConflict, s.accountList(r, cb),
-				"This checkbook is open for reading only",
-				cb.path+" was opened read-only, which is how a backup is looked at without being changed. Nothing was written.",
-				"To make changes, close this and open the checkbook you keep your records in. To work from this file, close it, copy it, and open the copy without the read-only box ticked.")
+				"This checkbook is open for reading only", detail, next)
 			return
 		}
 		h(w, r, cb)

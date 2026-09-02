@@ -16,6 +16,21 @@ import (
 // Per SPECIFICATION.md ST-4 this value must never change.
 const AppID int32 = 0x4d4d4d20
 
+// BackupAppID is what a backup carries instead. It is the ASCII encoding of
+// "MMM~" (0x4d, 0x4d, 0x4d, 0x7e): the same three letters, so a file inspected
+// with any SQLite tool still says which program wrote it, and a fourth byte that
+// says which kind of file it is.
+//
+// A backup is a byte-for-byte capable checkbook -- VACUUM INTO copies the header
+// along with everything else -- so before this existed the only thing telling
+// the two apart was the reader remembering to tick a box. That is not a guard.
+// The application_id is, because it travels with the file: through a rename, a
+// copy, a move to another disk. Open refuses it (BK-6), OpenReadOnly accepts it,
+// and backup.Restore is how records inside one come back into use.
+//
+// Like AppID, this value must never change.
+const BackupAppID int32 = 0x4d4d4d7e
+
 // isoDate matches an ISO 8601 calendar date, "YYYY-MM-DD".
 //
 // SQLite has no date type, so dates are TEXT in this format: it sorts

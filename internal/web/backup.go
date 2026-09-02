@@ -10,6 +10,7 @@ import (
 
 	"github.com/mdhender/mmm/internal/account"
 	"github.com/mdhender/mmm/internal/backup"
+	"github.com/mdhender/mmm/internal/storage"
 )
 
 // backedUpParam carries the name of a backup just written through the redirect
@@ -26,12 +27,39 @@ const backedUpParam = "backedup"
 // It is called from pageLayout, so any page can carry one and no page has to
 // remember to.
 func noticeFor(r *http.Request) string {
-	name := r.URL.Query().Get(backedUpParam)
-	if name == "" || !validBackupName(name) {
-		return ""
+	q := r.URL.Query()
+
+	if name := q.Get(backedUpParam); name != "" {
+		if !validBackupName(name) {
+			return ""
+		}
+		return "A backup was written beside your checkbook, as " + name +
+			". It was reopened and read back as a checkbook before being named, so it is a copy you can restore from. Copy it somewhere else — another disk, or a service you already use — while you are thinking of it."
 	}
-	return "A backup was written beside your checkbook, as " + name +
-		". It was reopened and read back as a checkbook before being named, so it is a copy you can restore from. Copy it somewhere else — another disk, or a service you already use — while you are thinking of it."
+
+	if path := q.Get(restoredParam); path != "" {
+		if !restoredCheckbookExists(path) {
+			return ""
+		}
+		return "That backup was restored to " + path +
+			", as an ordinary checkbook. It was opened and read back before it was given that name, and the backup itself was not altered. Open it below to check the balances, then back it up so the trail continues from here."
+	}
+
+	return ""
+}
+
+// restoredCheckbookExists reports whether path really is a checkbook this
+// program can open, right now.
+//
+// The value arrives in a URL, which anything can compose, and it goes into a
+// sentence the reader is meant to believe. validBackupName answers the same
+// question for a backup's name by its shape; a restored checkbook is named by
+// the reader and has no shape to check, so the file is asked instead. Reading
+// four bytes of a header is cheap and it is the difference between reporting
+// something and asserting it.
+func restoredCheckbookExists(path string) bool {
+	appID, err := storage.ApplicationID(path)
+	return err == nil && appID == storage.AppID
 }
 
 // validBackupName reports whether name is one this program wrote: the exact
@@ -96,7 +124,7 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	if cb != nil {
 		path, inMemory = cb.path, cb.inMemory
 	} else {
-		path, inMemory = s.closedCheckbook()
+		path, inMemory, _ = s.closedCheckbook()
 	}
 
 	switch {

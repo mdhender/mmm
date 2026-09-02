@@ -25,6 +25,11 @@ type noCheckbookPage struct {
 	Closed   string
 	Copyable bool
 
+	// ClosedIsBackup says the file just closed was a backup being read. It
+	// changes which offer the page makes about it: a backup of a backup is not
+	// a useful thing to be handed a button for, and restoring it is.
+	ClosedIsBackup bool
+
 	// CanOpen and CanQuit say whether the program was built with those actions
 	// wired up. An action that is not offered cannot be pressed and then refused.
 	CanOpen bool
@@ -48,6 +53,15 @@ type noCheckbookPage struct {
 	// reader's work still in it.
 	Path     string
 	ReadOnly bool
+
+	// RestoreSource and RestoreDest are the same thing for the restore form,
+	// and RestoreMessage is what happened to it. Restoring is offered here and
+	// nowhere else: it needs a name to write to, which is a box rather than a
+	// button, and this is the page a reader is on when they have closed a backup
+	// and decided it is the one.
+	RestoreSource  string
+	RestoreDest    string
+	RestoreMessage string
 }
 
 // handleCheckbook shows the checkbook page.
@@ -66,35 +80,57 @@ func (s *Server) handleCheckbook(w http.ResponseWriter, r *http.Request) {
 // renderNoCheckbook writes the page, with message shown above the form when
 // something was refused.
 func (s *Server) renderNoCheckbook(w http.ResponseWriter, r *http.Request, status int, message string) {
-	s.renderNoCheckbookPage(w, r, status, message, nil, OpenRequest{})
+	s.renderNoCheckbookPage(w, r, status, message, nil, OpenRequest{}, RestoreRequest{}, "")
 }
 
 // renderOpenFailed writes the page carrying DescribeOpenError's account of why a
 // checkbook would not open, and the path that was tried.
 func (s *Server) renderOpenFailed(w http.ResponseWriter, r *http.Request, status int, p Problem, req OpenRequest) {
-	s.renderNoCheckbookPage(w, r, status, "", &p, req)
+	s.renderNoCheckbookPage(w, r, status, "", &p, req, RestoreRequest{}, "")
 }
 
-func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, status int, message string, problem *Problem, req OpenRequest) {
-	closed, inMemory := s.closedCheckbook()
+// renderRestoreFailed writes the page with the restore form still holding what
+// the reader typed, and the reason it was refused above it.
+func (s *Server) renderRestoreFailed(w http.ResponseWriter, r *http.Request, status int, message string, req RestoreRequest) {
+	s.renderNoCheckbookPage(w, r, status, "", nil, OpenRequest{}, req, message)
+}
+
+func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, status int, message string, problem *Problem, req OpenRequest, restore RestoreRequest, restoreMessage string) {
+	closed, inMemory, closedIsBackup := s.closedCheckbook()
 
 	page := noCheckbookPage{
-		Version:  s.version,
-		Closed:   closed,
-		Copyable: closed != "" && !inMemory,
-		CanOpen:  s.open != nil,
-		CanQuit:  s.quit != nil,
-		Problem:  problem,
-		Message:  message,
-		Notice:   noticeFor(r),
-		Path:     req.Path,
-		ReadOnly: req.ReadOnly,
+		Version:        s.version,
+		Closed:         closed,
+		Copyable:       closed != "" && !inMemory && !closedIsBackup,
+		ClosedIsBackup: closedIsBackup,
+		CanOpen:        s.open != nil,
+		CanQuit:        s.quit != nil,
+		Problem:        problem,
+		Message:        message,
+		Notice:         noticeFor(r),
+		Path:           req.Path,
+		ReadOnly:       req.ReadOnly,
+		RestoreSource:  restore.Source,
+		RestoreDest:    restore.Dest,
+		RestoreMessage: restoreMessage,
 	}
 	if page.Path == "" && !inMemory {
 		// The obvious thing to open is the one just closed, so the box opens on
 		// it. It is the shape of "close, copy the file, open it again", which is
 		// the ritual this page exists to make possible without a terminal.
 		page.Path = closed
+	}
+	if restored := r.URL.Query().Get(restoredParam); restored != "" && restoredCheckbookExists(restored) {
+		// A restore just landed. What the reader wants to open is the file it
+		// produced, not the backup they were reading a moment ago.
+		page.Path = restored
+		page.ReadOnly = false
+	}
+	if page.RestoreSource == "" && closedIsBackup {
+		// They closed a backup to get here, which is the step before restoring
+		// it. Reading one is how you decide it is the right one, so the form
+		// opens on the file they were just reading.
+		page.RestoreSource = closed
 	}
 
 	s.renderStandalone(w, r, status, noCheckbookFile, page)

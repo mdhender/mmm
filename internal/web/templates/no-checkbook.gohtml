@@ -34,8 +34,19 @@
         </p>
         <dl class="problem-facts">
             <dt>Closed</dt>
-            <dd><code>{{.Closed}}</code></dd>
+            <dd><code>{{.Closed}}</code>{{if .ClosedIsBackup}} &mdash; a backup{{end}}</dd>
         </dl>
+        {{if .ClosedIsBackup}}
+            {{- /* A backup was being read. Back up now is withheld -- a backup of
+                   a backup is not a thing anybody came here for -- and the offer
+                   that belongs here is restoring, below, with this file already
+                   in the box. */ -}}
+            <p>
+                That was a backup, opened for reading. It is exactly as you found it. If it is the
+                day you want to be back at, <a href="#restore">restore it</a>: that copies it to a
+                new file you can open and work in, and leaves the backup itself alone.
+            </p>
+        {{end}}
         {{if .Copyable}}
             {{- /* The payoff that connects Close to backup. With the file closed
                    there is no write-ahead log beside it to fold back in first,
@@ -90,10 +101,12 @@
                     <input type="text" name="path" value="{{.Path}}"
                            autocomplete="off" spellcheck="false" placeholder="checkbook.db" autofocus>
                 </label>
-                {{- /* The program cannot tell a backup from a checkbook by
-                       looking at one, and should not guess, so this is the
-                       reader's to say. Read-only never migrates, which is what
-                       makes looking at an older copy safe. */ -}}
+                {{- /* For a backup this is not a precaution but the only way in:
+                       opening one for writing is refused outright (BK-6). It
+                       stays a box rather than being inferred because it is also
+                       the safe way to look at an ordinary checkbook. Read-only
+                       never migrates, which is what makes looking at an older
+                       copy safe. */ -}}
                 <label class="f-readonly checkbox">
                     <input type="checkbox" name="readonly" value="1"{{if .ReadOnly}} checked{{end}}>
                     Open read-only &mdash; for looking at a backup
@@ -119,6 +132,39 @@
             when the program stops.
         </p>
     {{end}}
+
+    {{- /* Outside the CanOpen block, because restoring needs no Opener: it
+           writes a third file and swaps nothing, so the route is always
+           registered and the offer is always honest. */ -}}
+    <h2 id="restore">Restore a backup</h2>
+    {{if .RestoreMessage}}<p class="entry-error" role="alert">{{.RestoreMessage}}</p>{{end}}
+    <p>
+        A backup cannot be opened and worked in &mdash; the moment it were written to it would
+        stop being the copy you took. Restoring makes a fresh checkbook out of one instead: it
+        copies the backup to a name you choose, brings the copy up to date if it came from an
+        older release, and reads it back before giving it that name.
+    </p>
+    <form class="entry account-form" method="post" action="/checkbook/restore">
+        <input type="hidden" name="return" value="/checkbook">
+        <div class="entry-fields">
+            <label class="f-path">Restore from
+                <input type="text" name="source" value="{{.RestoreSource}}"
+                       autocomplete="off" spellcheck="false" placeholder="checkbook-20260902-141530.db">
+            </label>
+            <label class="f-path">Restore to
+                <input type="text" name="dest" value="{{.RestoreDest}}"
+                       autocomplete="off" spellcheck="false" placeholder="checkbook-restored.db">
+            </label>
+            <div class="f-add">
+                <button type="submit">Restore</button>
+            </div>
+        </div>
+        <p class="muted entry-note">
+            The file you restore to must not exist yet. Nothing is ever written over: the file
+            you would be replacing is often the one that shows what went wrong. Open the
+            restored copy, check the balances, and put it where you keep your records yourself.
+        </p>
+    </form>
 
     {{if .CanQuit}}
         <h2>Or stop the program</h2>

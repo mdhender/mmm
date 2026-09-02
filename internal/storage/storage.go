@@ -65,6 +65,13 @@ const (
 	// it; read-only is where it has nowhere to go, because bringing it up to
 	// date is a write and a backup that has been rewritten is not a backup.
 	ErrDatabaseTooOld = cerrs.Error("database was written by an older version of the program")
+
+	// ErrIsBackup is returned when the file this program was asked to open for
+	// writing is one of its own backups (SPECIFICATION.md BK-6). A backup is
+	// read, or it is restored to a new file; it is never the file being written
+	// to, because the moment it is written to it has stopped being the copy that
+	// was taken.
+	ErrIsBackup = cerrs.Error("file is a backup and cannot be opened for writing")
 )
 
 // PoolSize is the number of connections the store keeps open.
@@ -95,6 +102,7 @@ type Store struct {
 	path     string
 	inMemory bool
 	readOnly bool
+	isBackup bool
 	pool     pool
 
 	// closeOnce makes Close idempotent. The two pools disagree about a second
@@ -133,7 +141,73 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("%s: %w", dir, ErrMissingDirectory)
 	}
 
+	if err := refuseBackup(path); err != nil {
+		return nil, err
+	}
+
 	return open(ctx, path, path, PoolSize, false)
+}
+
+// refuseBackup reports ErrIsBackup when path is a backup this program wrote.
+//
+// This is the guard the whole rule turns on, and it lives here rather than in
+// the browser or the command because every way in arrives at Open: the -db
+// flag, the box on the no-checkbook page, and the terminal register still to be
+// written. One place could open a backup for writing, so one place says no.
+//
+// The header is read on a connection of its own, before the pool exists,
+// because reaching sqlitemigration is already too late: it would migrate the
+// file and convert it to WAL, and a backup that has been rewritten is not the
+// backup that was taken. That is not a hypothetical -- it is the bug this
+// function was written for.
+//
+// Anything that is not a readable SQLite database falls through untouched. A
+// path that does not exist yet is a new checkbook, and a file that is not a
+// database gets the error open reports for it; a guess here could only make
+// those answers worse.
+func refuseBackup(path string) error {
+	appID, err := ApplicationID(path)
+	if err != nil || appID != BackupAppID {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", path, ErrIsBackup)
+}
+
+// ApplicationID reads the application_id out of the header of the SQLite
+// database at path.
+//
+// It opens read-only and without OpenCreate, so a missing file is reported
+// rather than made, and it never migrates: this is how a file is asked what it
+// is before anything is done to it. Callers that cannot tell the difference
+// between "not one of ours" and "could not be read" should treat any error as
+// the former and let the ordinary open path produce the message.
+func ApplicationID(path string) (int32, error) {
+	if path == "" {
+		return 0, ErrMissingPath
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0, fmt.Errorf("%s: %w", path, ErrMissingFile)
+	}
+	// An empty file is a database SQLite would happily create a schema in. It
+	// has no header to read and is nobody's backup.
+	if info.Size() == 0 {
+		return 0, fmt.Errorf("%s: %w", path, ErrNotCheckbook)
+	}
+
+	// OpenURI is deliberately absent: path is a filesystem path, and a "?" in a
+	// folder name must stay part of the name rather than becoming a parameter.
+	conn, err := sqlite.OpenConn(path, sqlite.OpenReadOnly)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	defer conn.Close()
+
+	appID, err := pragmaInt(conn, `PRAGMA application_id;`)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	return int32(appID), nil
 }
 
 // OpenMemory opens an in-memory database. It touches no files and vanishes when
@@ -233,9 +307,19 @@ func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
 	// sqlitemigration does this for a read-write open. Read-only never reaches
 	// it, so the guard that stops the program reading an unrelated SQLite file
 	// as a checkbook has to be made here.
-	if int32(appID) != AppID {
+	//
+	// Both of this program's application ids are accepted, and that asymmetry
+	// with Open is the point: a backup is refused for writing and welcome for
+	// reading. Looking at one is the only thing that was ever safe to do to it
+	// in place.
+	switch int32(appID) {
+	case AppID:
+	case BackupAppID:
+		store.isBackup = true
+	default:
 		p.Close()
-		return nil, fmt.Errorf("%s: %w: application_id is %d, not %d", path, ErrNotCheckbook, appID, AppID)
+		return nil, fmt.Errorf("%s: %w: application_id is %d, not %d or %d",
+			path, ErrNotCheckbook, appID, AppID, BackupAppID)
 	}
 	if err := checkReadOnlySchemaVersion(schemaVersion); err != nil {
 		p.Close()
@@ -388,6 +472,14 @@ func (s *Store) IsMemory() bool { return s.inMemory }
 // somebody tries. Every write action is withheld rather than offered and then
 // refused.
 func (s *Store) ReadOnly() bool { return s.readOnly }
+
+// IsBackup reports whether the database is one of this program's backups, as
+// opposed to a checkbook that merely happens to be open read-only.
+//
+// It is a sharper thing to tell the reader than ReadOnly alone. "Read-only" says
+// what cannot be done here; "this is a backup" says what the file is, which is
+// what decides whether the next step is to close it or to restore it.
+func (s *Store) IsBackup() bool { return s.isBackup }
 
 // Conn borrows a connection from the pool. The caller must return it with Put,
 // conventionally via defer.

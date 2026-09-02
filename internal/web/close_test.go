@@ -114,8 +114,11 @@ func TestCloseAndTheFileIsOfferedForBackup(t *testing.T) {
 		t.Fatalf("backup after closing = %d, want 303: %s", w.Code, w.Body.String())
 	}
 	name := mustQuery(t, w.Header().Get("Location"), "backedup")
-	if _, err := storage.Open(t.Context(), filepath.Join(filepath.Dir(path), name)); err != nil {
+	written, err := storage.OpenReadOnly(t.Context(), filepath.Join(filepath.Dir(path), name))
+	if err != nil {
 		t.Errorf("the backup taken after closing does not open: %v", err)
+	} else {
+		_ = written.Close()
 	}
 }
 

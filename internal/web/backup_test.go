@@ -3,6 +3,7 @@
 package web_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -70,11 +71,20 @@ func TestBackupNowWritesAVerifiedCopy(t *testing.T) {
 	if _, err := os.Stat(written); err != nil {
 		t.Fatalf("the named backup is not there: %v", err)
 	}
-	copyStore, err := storage.Open(t.Context(), written)
+	// Read-only, because that is now the only way a backup opens (BK-6). It is
+	// still a checkbook inside, which is what BK-5 asks.
+	copyStore, err := storage.OpenReadOnly(t.Context(), written)
 	if err != nil {
 		t.Fatalf("the backup does not open as a checkbook: %v", err)
 	}
+	if !copyStore.IsBackup() {
+		t.Error("the backup is not stamped as one")
+	}
 	_ = copyStore.Close()
+
+	if _, err := storage.Open(t.Context(), written); !errors.Is(err, storage.ErrIsBackup) {
+		t.Errorf("opening the backup for writing: %v, want ErrIsBackup", err)
+	}
 
 	// And the reader is told, on whatever page they land on.
 	body := get(t, h, loc.String()).Body.String()

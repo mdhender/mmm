@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.19.2-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.20.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -28,6 +28,7 @@ It can:
 - close the checkbook, and open another — or the same one again, or a backup, or the sample
   household — without restarting
 - open a database read-only, so a backup can be read without being altered
+- restore a backup to a new file, bringing the copy up to date and leaving the backup as it is
 - stop the program from the browser
 
 It does not change an account once created — rename it, change its currency, close it, or remove
@@ -153,6 +154,10 @@ Below the accounts, and beside every page:
 | --- | --- |
 | **Back up now** | Writes a verified copy beside the database. See [Backing up](#backing-up). Not shown for `-demo` or a read-only database. |
 | **Close checkbook** | Asks first, then closes the file. See [Closing and opening a checkbook](#closing-and-opening-a-checkbook). |
+
+When the open database is a backup, a note under **Close checkbook** says that restoring is
+offered on the page you land on after closing. Restoring is not a sidebar button because it needs
+a name to write to, which is a box rather than a press.
 
 **Quit** is deliberately not here. It ends the program rather than acting on the checkbook, and it
 lives on the page you land on after closing. See [Quitting](#quitting).
@@ -337,6 +342,12 @@ first, reopened read-only, checked with `PRAGMA quick_check`, and only then give
 **A copy that will not read back is deleted rather than left looking like a backup**, and the page
 says so.
 
+**A backup is stamped as one.** SQLite databases carry an `application_id` in their header, and a
+backup is given a different one from a checkbook — `MMM~` rather than `MMM `. The program refuses
+to open a file carrying it for writing, so a backup cannot be migrated, typed into, or mistaken for
+your records, however it is named or wherever it is moved to. It is the file itself that says what
+it is; the timestamp in the name is for you, not for the program.
+
 An existing backup is never written over. A second backup in the same second gets `-2` appended.
 
 Afterwards the page you were on says which file was written. Copy it somewhere else — another
@@ -348,7 +359,8 @@ disk, or a service you already use — while you are thinking of it.
 | The folder holding the database no longer exists | Refused. No folder is created. |
 | The copy will not reopen as a checkbook | Refused, the copy deleted, and the database reported as probably damaged. |
 
-To restore one, see [How to restore a backup](../how-to/restore-a-backup.md).
+To restore one, see [Restoring a backup](#restoring-a-backup) below and
+[How to restore a backup](../how-to/restore-a-backup.md).
 
 ## Closing and opening a checkbook
 
@@ -361,8 +373,10 @@ no `-wal` beside it waiting to be folded back in, so the single file is the whol
 Afterwards every window on the register — including ones you left open elsewhere — gets a page
 saying no checkbook is open, with status **503**. That page offers:
 
-- the name of the file that was closed, and **Back up now** for it
+- the name of the file that was closed, and **Back up now** for it — unless it was a backup, in
+  which case the page says so and points at **Restore a backup** instead
 - a box to open a checkbook by path, with **Open read-only** beside it
+- **Restore a backup**, with **Restore from** and **Restore to**
 - **Open the sample household instead**
 - **Quit**
 
@@ -378,26 +392,62 @@ what it wanted to hear.
 
 ## Opening a backup read-only
 
-Tick **Open read-only** to look at a backup without changing it.
+Tick **Open read-only** to look at a backup. For a backup this is not a precaution but the only
+way in: opening one without the box ticked is refused, and the page says so and offers the two
+things you can do instead.
 
 Opening a database normally brings its schema up to date, so opening an older backup that way
 would rewrite it — and a backup that has been rewritten is no longer the backup you took. A
 read-only database is never migrated and never written to.
 
-The program cannot tell a backup from a checkbook by looking at one, so the box is yours to tick.
+The box stays yours to tick rather than being inferred, because it is also the safe way to look at
+an ordinary checkbook.
 
 A read-only register is marked in the frame of every page: the title bar and status bar turn
-slate, and a padlock with **Read-only — nothing can be changed** sits at the right of the title
-bar. Every write action is withheld rather than offered and then refused — there is no entry form,
-no status mark to press, no **+ Add account**, and no **Back up now**. A write that arrives anyway,
+slate, and a padlock sits at the right of the title bar — reading **Backup — nothing can be
+changed** for a backup, and **Read-only — nothing can be changed** for a checkbook opened this way.
+Every write action is withheld rather than offered and then refused — there is no entry form, no
+status mark to press, no **+ Add account**, and no **Back up now**. A write that arrives anyway,
 from a tab left open or an address typed in, is refused with status 409 and an explanation.
 
 | Condition | Result |
 | --- | --- |
 | The file does not exist | Refused. Read-only never creates one. |
 | The file is not a checkbook | Refused, unaltered. |
-| The database is from an older release | Refused, unaltered, with instructions to copy it and open the copy normally. |
+| The database is from an older release | Refused, unaltered, with instructions to restore it. |
 | The database is from a newer release | Refused, unaltered. |
+
+## Restoring a backup
+
+**Restore a backup**, on the page shown when no checkbook is open, takes two paths: the backup to
+restore **from**, and the file to restore **to**. The second must not exist yet.
+
+Restoring copies the backup to that name and makes the copy an ordinary checkbook — it stamps it
+as one and brings its schema up to date if it came from an older release. The copy is written under
+a working name, opened and read back, and only then given the name you asked for; a copy that will
+not come up as a checkbook is deleted rather than left looking like one.
+
+**The backup is not altered.** It is still a backup afterwards, and it can be restored again.
+
+**Nothing is ever written over.** A restore is what you reach for after something has gone wrong,
+and the file you would be replacing is often the one that shows what went wrong. Restore to a new
+name, open it and check the balances, then move it into place yourself.
+
+Restoring and opening are two steps on purpose. Restoring makes the records usable again; opening
+puts a checkbook in front of you. After a restore, the page names the file that was written and
+fills the open box in with it, so opening it is one press.
+
+| Condition | Result |
+| --- | --- |
+| The file to restore to already exists | Refused. Nothing is written, and a free name is suggested. |
+| The folder to restore into does not exist | Refused. No folder is created. |
+| The file to restore from is not there | Refused. |
+| The file to restore from is not a checkbook or a backup of one | Refused, unaltered. |
+| The backup is from a newer release | Refused, unaltered, with instructions to use that release. |
+| The copy will not open as a checkbook | Refused, the copy deleted, and the backup reported as probably damaged. |
+
+A checkbook is accepted where a backup is, so this is also how you copy your records to a second
+file without leaving the browser.
 
 ## Quitting
 
@@ -434,11 +484,13 @@ contacts GitHub.
 | `/checkbook` | The page shown when no checkbook is open. Redirects to `/` when one is. |
 | `/checkbook/close` | `GET` asks; `POST` closes. |
 | `/checkbook/open` | `POST` only. Opens a checkbook by path, read-only if asked, or the sample household. Answers with a redirect to the register. |
+| `/checkbook/restore` | `POST` only. Restores a backup to a new file and redirects back with its name. Does not open it. |
 | `/quit` | `GET` asks; `POST` stops the program. |
 | `/static/app.css` | The stylesheet. |
 | `/static/htmx.min.js` | The script that replaces a single row. Served from this program; nothing is fetched from the internet. |
 
-`/backup`, `/checkbook/close`, `/checkbook/open` and `/quit` act on your file or on the program
+`/backup`, `/checkbook/close`, `/checkbook/open`, `/checkbook/restore` and `/quit` act on your file
+or on the program
 rather than on a record, so they accept `POST` only and are refused unless the request came from a
 page this program served. There is no login, no session, and no token: the check is the two headers
 (`Sec-Fetch-Site` and `Origin`) a browser fills in by itself, so a form on another site cannot stop
@@ -520,6 +572,8 @@ is on screen.
 | A close arrives for a checkbook that is no longer the one open | 409 |
 | A write arrives for a database open read-only | 409 |
 | A backup is refused because there is no file to copy | 409 |
+| A backup is opened for writing | 422, on the page that offers to open one |
+| A restore is refused | 422 |
 | A control request did not come from a page this program served | 403 |
 
 Each of these pages states what happened and what to do next, and links back to the register.

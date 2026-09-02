@@ -39,9 +39,13 @@ type OpenRequest struct {
 	// Path is the database file. It is ignored when Demo is set.
 	Path string
 
-	// ReadOnly asks for a database that cannot be written to, which is how a
-	// backup is opened. The program cannot tell a backup from a checkbook by
-	// looking at it, and should not guess, so this is the reader's to say.
+	// ReadOnly asks for a database that cannot be written to.
+	//
+	// A backup is only ever opened this way -- storage.Open refuses one outright
+	// (BK-6) -- so for a backup this box is not a precaution the reader has to
+	// remember, it is the only way in. It stays offered rather than being
+	// inferred because it is also the safe way to look at an ordinary checkbook,
+	// and because a reader who ticks it has said what they mean.
 	ReadOnly bool
 
 	// Demo asks for the sample household, held in memory.
@@ -105,6 +109,7 @@ type Server struct {
 	// now safe to copy -- which is the whole point of being able to close one.
 	closedPath     string
 	closedInMemory bool
+	closedIsBackup bool
 
 	// ctl serializes Open against Close. It is never taken by a request that
 	// reads the register, so opening a large database -- migrations and all --
@@ -223,6 +228,11 @@ func (s *Server) routes() {
 	if s.open != nil {
 		s.mux.HandleFunc("POST /checkbook/open", s.control(s.handleOpen))
 	}
+	// Restoring writes a third file and swaps nothing, so unlike open it needs
+	// no Opener and is always available. It is a control route for the same
+	// reason the others are: its effect is on the household's folder rather
+	// than on a record.
+	s.mux.HandleFunc("POST /checkbook/restore", s.control(s.handleRestore))
 	if s.quit != nil {
 		s.mux.HandleFunc("GET /quit", s.handleConfirmQuit)
 		s.mux.HandleFunc("POST /quit", s.control(s.handleQuit))
@@ -361,6 +371,12 @@ type layout struct {
 	// cannot be written to looks exactly like one that can until somebody tries.
 	ReadOnly bool
 
+	// IsBackup narrows ReadOnly to the case it was built for. "Read-only" says
+	// what cannot be done here; "this is a backup" says what the file is, which
+	// is what decides whether the reader's next move is to close it or to
+	// restore it (BK-6).
+	IsBackup bool
+
 	// Ephemeral marks a database held in memory -- the sample household -demo
 	// serves. Every page says so, because a register that keeps nothing looks
 	// exactly like one that does, and somebody entering real transactions into
@@ -387,6 +403,7 @@ func (s *Server) pageLayout(r *http.Request, cb *checkbook, title string, accoun
 		l.Database = cb.path
 		l.Ephemeral = cb.inMemory
 		l.ReadOnly = cb.readOnly
+		l.IsBackup = cb.isBackup
 		l.Generation = cb.gen
 		l.Open = true
 	}

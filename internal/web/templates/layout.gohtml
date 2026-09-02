@@ -35,11 +35,18 @@
         <span class="temporary" title="Sample data held in memory. It is discarded when the program stops, and nothing is written to disk.">
             <span aria-hidden="true">&#8987;</span> Demo &mdash; nothing is saved
         </span>
+    {{else if .IsBackup}}
+        {{- /* A backup. Named as one rather than described as read-only,
+               because "this is a backup" is the fact that decides what the
+               reader does next: close it, or restore it. */ -}}
+        <span class="locked" title="A backup, opened for reading. It is never written to: the moment it were, it would stop being the copy that was taken.">
+            <span aria-hidden="true">&#128274;</span> Backup &mdash; nothing can be changed
+        </span>
     {{else if .ReadOnly}}
-        {{- /* A backup being looked at. Marked in the frame for the same reason
-               the demo is: a register that cannot be written to looks exactly
-               like one that can until somebody tries. */ -}}
-        <span class="locked" title="Opened for reading only, which is how a backup is looked at. Nothing here can be changed.">
+        {{- /* A checkbook opened for reading. Marked in the frame for the same
+               reason the demo is: a register that cannot be written to looks
+               exactly like one that can until somebody tries. */ -}}
+        <span class="locked" title="Opened for reading only. Nothing here can be changed.">
             <span aria-hidden="true">&#128274;</span> Read-only &mdash; nothing can be changed
         </span>
     {{end}}
@@ -100,6 +107,14 @@
         {{- /* A link, because it goes to a page that asks first (RG-3). The
                closing itself is the POST on that page. */ -}}
         <a class="action" href="/checkbook/close">Close checkbook</a>
+        {{- /* Restoring is offered on the page after closing rather than here.
+               It needs a name to write to, which is a pair of boxes and not a
+               sidebar button, and closing first is the step that decides this
+               is the backup you want. Saying where it is keeps this from being
+               a dead end (RG-4). */ -}}
+        {{if .IsBackup}}
+            <p class="muted action-note">To work from these records, close this backup. Restoring is offered on the page you land on.</p>
+        {{end}}
     </nav>
     {{end}}
     </div>
@@ -122,8 +137,13 @@
             <span class="temporary-mark" aria-hidden="true">&#8987;</span>
             Database: <code>{{.Database}}</code> &mdash; held in memory, nothing is saved
         </span>
+    {{else if .IsBackup}}
+        <span title="A backup, opened for reading. Close it and restore it to work from these records.">
+            <span class="temporary-mark" aria-hidden="true">&#128274;</span>
+            Backup: <code>{{.Database}}</code> &mdash; open for reading only
+        </span>
     {{else if .ReadOnly}}
-        <span title="Opened for reading only, which is how a backup is looked at. Nothing here can be changed.">
+        <span title="Opened for reading only. Nothing here can be changed.">
             <span class="temporary-mark" aria-hidden="true">&#128274;</span>
             Database: <code>{{.Database}}</code> &mdash; open for reading only
         </span>

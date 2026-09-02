@@ -38,6 +38,26 @@ func TestDescribeOpenErrorCoversEveryFailure(t *testing.T) {
 			"create-your-first-checkbook",
 		},
 		{
+			// A backup is one of ours, so "not a checkbook" would be both wrong
+			// and useless: the reader has two things they can do with it.
+			"a backup",
+			fmt.Errorf("checkbook-20260902-141530.db: %w", storage.ErrIsBackup),
+			"is a backup",
+			"restore-a-backup",
+		},
+		{
+			"written by an older version",
+			fmt.Errorf("checkbook-20240101-120000.db: %w: database is at schema 1, this program expects 3", storage.ErrDatabaseTooOld),
+			"older version",
+			"restore-a-backup",
+		},
+		{
+			"no file there",
+			fmt.Errorf("/nowhere/checkbook.db: %w", storage.ErrMissingFile),
+			"no file there",
+			"create-your-first-checkbook",
+		},
+		{
 			"missing directory",
 			fmt.Errorf("/nowhere: %w", storage.ErrMissingDirectory),
 			"folder does not exist",

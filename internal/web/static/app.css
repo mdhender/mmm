@@ -325,3 +325,7 @@ main.problem .lead { margin: 0 0 1.25rem; }
 .docs li { margin-bottom: .35rem; }
 .detail { overflow-wrap: anywhere; }
 .detail code { color: var(--negative); }
+
+/* A note under a sidebar action, saying where the next step is rather than
+   offering a button that would have nowhere to put its answer. */
+.action-note { margin: .5rem 0 0; font-size: .75rem; line-height: 1.4; }

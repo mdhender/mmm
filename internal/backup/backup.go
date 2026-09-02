@@ -9,6 +9,19 @@
 // A backup is not a file that was written. BK-5 asks for a copy that is usable
 // and verifiable, so Create reopens what it wrote and only then reports success;
 // the copy carries a backup's name only once it has opened as a checkbook.
+//
+// A backup is also not a checkbook. BK-6 asks that it never be opened for
+// writing, and the enforcement is a byte in the file's own header: Create stamps
+// the copy with storage.BackupAppID, which storage.Open refuses and
+// storage.OpenReadOnly accepts. The header travels with the file through a
+// rename, a copy, or a move to another disk, which the timestamp in the name
+// does not.
+//
+// That leaves records inside a backup reachable by exactly one route, and
+// Restore is it: copy the backup to a new file, stamp the copy as an ordinary
+// checkbook, and let it migrate forward. Restore is deliberately the only place
+// where an old schema is brought up to date, because it is the only place where
+// doing so is not destroying the thing that was kept.
 package backup
 
 import (
@@ -19,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"zombiezen.com/go/sqlite"
@@ -50,6 +64,20 @@ const (
 	// ErrNotVerified is returned when the copy was written but would not reopen
 	// as a checkbook (BK-5). The unusable copy is removed.
 	ErrNotVerified = cerrs.Error("the copy could not be reopened as a checkbook")
+
+	// ErrMissingDestination is returned when Restore is called without a name to
+	// write the restored checkbook under.
+	ErrMissingDestination = cerrs.Error("missing destination path")
+
+	// ErrDestinationExists is returned when Restore is asked to write over a
+	// file that is already there. It never does. A restore is what somebody
+	// reaches for after something went wrong, and the file they would be writing
+	// over is quite often the evidence of what it was.
+	ErrDestinationExists = cerrs.Error("a file already exists at that path")
+
+	// ErrNotBackup is returned when Restore is handed a file this program did
+	// not write.
+	ErrNotBackup = cerrs.Error("file is not a checkbook or a backup of one")
 )
 
 // memoryPrefix is what storage.Store reports as the path of a database held in
@@ -61,7 +89,8 @@ const memoryPrefix = ":memory:"
 // in, and sorting is already handled by the fixed width.
 const nameLayout = "20060102-150405"
 
-// Result describes the backup that was written.
+// Result describes the copy that was written: a backup by Create, a restored
+// checkbook by Restore.
 type Result struct {
 	// Path is the file that now holds the copy.
 	Path string
@@ -105,12 +134,21 @@ func Create(ctx context.Context, src, dir string) (Result, error) {
 	// The copy is written under a name of its own and renamed into place at the
 	// end, so an interrupted or unverifiable copy never sits in the folder
 	// looking like a backup.
-	tmp, err := tempName(dir)
+	tmp, err := tempName(dir, "backup")
 	if err != nil {
 		return Result{}, err
 	}
 
 	if err := vacuumInto(ctx, src, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return Result{}, err
+	}
+
+	// BK-6. VACUUM INTO copies the header along with the records, so up to this
+	// line the copy is a perfectly openable checkbook and nothing but its name
+	// says otherwise. Stamping it is what makes it a backup rather than a second
+	// checkbook somebody could start typing into by mistake.
+	if err := setApplicationID(ctx, tmp, storage.BackupAppID); err != nil {
 		_ = os.Remove(tmp)
 		return Result{}, err
 	}
@@ -177,12 +215,24 @@ func vacuumInto(ctx context.Context, src, dest string) error {
 // A quick_check on top is what turns "it opened" into "it is usable". It reads
 // the structure of every table and index, which is the difference between a file
 // that has a valid header and a file that has the household's records in it.
+//
+// Two further things are asserted rather than assumed, because both are silent
+// when they go wrong. That the stamp took, since a backup still carrying AppID
+// is one somebody can open and type into (BK-6). And that the file is not in WAL
+// mode, since a backup is meant to be one file the household can copy to another
+// disk, and a WAL-mode database is not one file until it has been checkpointed.
+// VACUUM INTO produces a rollback-journal database and setApplicationID is
+// opened so as not to change that, so this is a guard on both of them.
 func verify(ctx context.Context, path string) error {
 	store, err := storage.OpenReadOnly(ctx, path)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrNotVerified, err)
 	}
 	defer func() { _ = store.Close() }()
+
+	if !store.IsBackup() {
+		return fmt.Errorf("%w: the copy is not stamped as a backup", ErrNotVerified)
+	}
 
 	conn, err := store.Conn(ctx)
 	if err != nil {
@@ -202,6 +252,78 @@ func verify(ctx context.Context, path string) error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("%w: %s", ErrNotVerified, result)
+	}
+
+	mode, err := journalMode(conn)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNotVerified, err)
+	}
+	if strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("%w: the copy is in wal mode, so it is not one self-contained file", ErrNotVerified)
+	}
+	return nil
+}
+
+// journalMode reads a connection's journal mode. On a read-only connection this
+// reports what the file itself says, which is what verify is asking about.
+func journalMode(conn *sqlite.Conn) (string, error) {
+	var mode string
+	err := sqlitex.ExecuteTransient(conn, `PRAGMA journal_mode;`, &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			mode = stmt.ColumnText(0)
+			return nil
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("read the journal mode: %w", err)
+	}
+	return mode, nil
+}
+
+// setApplicationID writes id into the header of the database at path.
+//
+// This is the one write either operation makes to the file it is producing, and
+// it is made to a working copy that has not yet earned its name -- never to the
+// source, and never to a file the household would recognize.
+//
+// The flags are exactly OpenReadWrite: no OpenCreate, so a missing file is
+// reported rather than made, and no OpenWAL, so a rollback-journal database
+// stays one. sqlite.OpenConn applies WAL among its defaults when no flags are
+// given, and converting the copy would defeat half of what a backup is for.
+func setApplicationID(ctx context.Context, path string, id int32) error {
+	conn, err := sqlite.OpenConn(path, sqlite.OpenReadWrite)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer conn.Close()
+
+	conn.SetInterrupt(ctx.Done())
+
+	// A pragma argument cannot be bound -- SQLite parses it before parameters
+	// exist -- so the statement is built. The rule that says never paste a value
+	// into SQL is about values from outside the program; id is an int32 constant
+	// declared in storage, formatted as a decimal integer, and there is no
+	// spelling of it that could be anything else.
+	set := `PRAGMA application_id = ` + strconv.FormatInt(int64(id), 10) + `;`
+	if err := sqlitex.ExecuteTransient(conn, set, nil); err != nil {
+		return fmt.Errorf("stamp %s: %w", path, err)
+	}
+
+	// Read back rather than assume, the way storage verifies its own pragmas. A
+	// header field that did not take is silent, and the failure it would leave
+	// behind is a backup that opens for writing.
+	var got int64
+	err = sqlitex.ExecuteTransient(conn, `PRAGMA application_id;`, &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			got = stmt.ColumnInt64(0)
+			return nil
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("read back the application id of %s: %w", path, err)
+	}
+	if int32(got) != id {
+		return fmt.Errorf("stamp %s: application_id is %d, not %d", path, got, id)
 	}
 	return nil
 }
@@ -226,13 +348,29 @@ func freeName(dir string, now time.Time) (string, error) {
 	return "", fmt.Errorf("%s: %w", filepath.Join(dir, "checkbook-"+stamp+".db"), ErrNameInUse)
 }
 
-// tempName is where the copy is written before it has earned a backup's name.
+// tempName is where a copy is written before it has earned its name. kind says
+// which operation is producing it, so a folder interrupted mid-restore does not
+// hold a file calling itself a backup.
+//
 // The leading dot keeps a half-written file out of the way on the platforms that
-// hide such names, and the token keeps two backups at once from colliding.
-func tempName(dir string) (string, error) {
+// hide such names, and the token keeps two operations at once from colliding.
+func tempName(dir, kind string) (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("name the working copy: %w", err)
 	}
-	return filepath.Join(dir, ".checkbook-backup-"+hex.EncodeToString(b[:])+".tmp"), nil
+	return filepath.Join(dir, ".checkbook-"+kind+"-"+hex.EncodeToString(b[:])+".tmp"), nil
+}
+
+// removeWorkingCopy deletes a working file and anything SQLite left beside it.
+//
+// A -wal and a -shm appear whenever a database is opened read-write in WAL mode,
+// which is what verifying a restore does, and a clean close removes them. This
+// is for the paths where the close was not clean: an orphaned -wal outliving the
+// file it belongs to is confusing at best, and would be adopted by the next file
+// to take that name at worst.
+func removeWorkingCopy(path string) {
+	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+		_ = os.Remove(name)
+	}
 }

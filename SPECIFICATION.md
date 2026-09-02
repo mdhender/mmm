@@ -104,6 +104,9 @@ requirements; where they conflict with this document, this document wins.
 - **BK-4** Restoring a backup MUST be a documented, testable operation.
 - **BK-5** A backup is not successful merely because a file was written. The format MUST be
   usable, the contents MUST be verifiable, and restoration MUST be practiced in development.
+- **BK-6** A backup MUST NOT be openable for writing. It MUST be readable in place, and its
+  records MUST be reachable by restoring it to a new file, which MUST NOT overwrite an existing
+  one. The distinction MUST be carried by the file itself rather than by its name or location.
 
 ## CO — Correctness
 

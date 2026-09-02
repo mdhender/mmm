@@ -74,11 +74,17 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("backup reports %d bytes", res.Bytes)
 	}
 
-	store, err := storage.Open(t.Context(), res.Path)
+	// Read-only, because a backup no longer opens any other way (BK-6). What
+	// BK-5 asks is that the records are in there and readable, and they are.
+	store, err := storage.OpenReadOnly(t.Context(), res.Path)
 	if err != nil {
 		t.Fatalf("open the backup: %v", err)
 	}
 	defer func() { _ = store.Close() }()
+
+	if !store.IsBackup() {
+		t.Error("the copy is not stamped as a backup")
+	}
 
 	accounts, err := account.List(t.Context(), store)
 	if err != nil {

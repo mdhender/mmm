@@ -90,11 +90,24 @@ func DescribeOpenError(err error, database string) Problem {
 		}
 		p.Docs = []Doc{docFirstFile, docManual}
 
+	case errors.Is(err, storage.ErrIsBackup):
+		p.Heading = "That file is a backup"
+		// Worded to hold on both pages this can reach. The startup problem page
+		// is a dead end with no form on it, so a step that says "press Open
+		// again" would be an instruction the reader cannot follow.
+		p.Steps = []string{
+			"Open your checkbook instead — the file you keep your records in, rather than one of the copies beside it. Backups are named checkbook-YYYYMMDD-HHMMSS.db, for the moment they were taken.",
+			"To look at this one, open it read-only. There is a box for that beside the path, and reading a backup changes nothing: it is how you check a backup is the one you want before you use it.",
+			"To work from these records, restore it. Restoring copies the backup to a new file and brings the copy up to date, and the backup itself is left exactly as it is.",
+			"Nothing was written. A backup opened for writing stops being the copy that was taken, so the program will not do it.",
+		}
+		p.Docs = []Doc{docRestore, docManual}
+
 	case errors.Is(err, storage.ErrDatabaseTooOld):
 		p.Heading = "That backup was written by an older version of the program"
 		p.Steps = []string{
-			"Copy the file, then open the copy without the read-only box ticked. Opening it normally brings its schema up to date, and doing that to a copy leaves the backup itself untouched.",
-			"Do not open this file normally. Bringing it up to date would rewrite it, and a backup that has been rewritten is no longer the backup you took.",
+			"Restore it. Restoring copies the backup to a new file and brings the copy up to date, which is the one place doing so is safe; the backup itself is left exactly as it is.",
+			"Reading it in place is not possible, and that is deliberate. Bringing this file up to date would rewrite it, and a backup that has been rewritten is no longer the backup you took.",
 		}
 		p.Docs = []Doc{docRestore, docUpgrade, docManual}
 

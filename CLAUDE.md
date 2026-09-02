@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `mmm` is a local-first household **checkbook** written in Go. The repository is early. The
 storage layer, the domain packages behind the register, and a web UI exist (`cmd/checkbook` serves
 it). The register creates accounts, displays them, takes new transactions, and marks them cleared,
-and the checkbook itself can be backed up, closed, reopened, opened read-only, and quit from the
-browser; editing an account or a transaction, splitting, transfers, importing, and reconciling do
-not exist yet. Much of the code written here is still creating the application rather than
+and the checkbook itself can be backed up, closed, reopened, opened read-only, restored from a
+backup, and quit from the browser; editing an account or a transaction, splitting, transfers,
+importing, and reconciling do not exist yet. Much of the code written here is still creating the application rather than
 modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
@@ -99,14 +99,15 @@ reuse them rather than becoming a second application.
   balance is computed there, not in a template**, so every interface shows the same number.
   `transaction.Create` writes a transaction and its splits in one database transaction and
   rejects splits that do not total the amount.
-- `internal/backup` — writes a verified, timestamped copy of a database (BK-2, BK-5).
-  `backup.Create(ctx, src, dir)` takes a **path**, not a `*storage.Store`, which is what lets the
-  same code copy a checkbook that is open and one just closed. `VACUUM INTO` on a connection the
-  package opens itself; never inside a transaction (`VACUUM` fails there, which also rules out
-  `ExecuteScript`), and the destination is **bound as a parameter**. The copy is written under a
-  working name, reopened with `storage.OpenReadOnly` and `PRAGMA quick_check`, and only then
-  renamed — so a file that will not read back never carries a backup's name. An existing backup is
-  never written over, and no directory is created (ST-6).
+- `internal/backup` — writes a verified, timestamped copy of a database (BK-2, BK-5) and restores
+  one (BK-4). `backup.Create(ctx, src, dir)` takes a **path**, not a `*storage.Store`, which is
+  what lets the same code copy a checkbook that is open and one just closed. `VACUUM INTO` on a
+  connection the package opens itself; never inside a transaction (`VACUUM` fails there, which also
+  rules out `ExecuteScript`), and the destination is **bound as a parameter**. The copy is written
+  under a working name, **stamped with `storage.BackupAppID`**, reopened with
+  `storage.OpenReadOnly` and `PRAGMA quick_check`, and only then renamed — so a file that will not
+  read back never carries a backup's name. An existing backup is never written over, and no
+  directory is created (ST-6). See Backups below.
 - `internal/web` — the browser interface; see Web UI below.
 - `internal/storage` — opens and migrates the SQLite database; owns the schema. `storage.Open(ctx,
   path)` returns a `*Store`; borrow connections with `Conn(ctx)` and always return them with
@@ -121,6 +122,41 @@ reuse them rather than becoming a second application.
   own local work**. Files load highest-precedence first: `.env.{env}.local`, `.env.local`,
   `.env.{env}`, `.env`. The `.local` files are gitignored and are the only ones that may hold
   secrets; `.env` and `.env.{env}` are committed and must never contain any.
+
+### Backups
+
+**A backup carries a different `application_id` from a checkbook** — `BackupAppID` is `0x4d4d4d7e`
+(`"MMM~"`), against `AppID`'s `0x4d4d4d20` (`"MMM "`). `storage.Open` refuses it with `ErrIsBackup`
+and `storage.OpenReadOnly` accepts it, recording `Store.IsBackup()`. That is BK-6, and it is the
+answer to a real bug: a backup is byte-for-byte a checkbook, `VACUUM INTO` copies the header, and
+before this the only thing between the reader and an opened, migrated, WAL-converted backup was
+remembering to tick a box. Both ids **must never change**, for the same reason `AppID` never could.
+The name is a hint for the household, never the enforcement — it does not survive a rename and the
+header does.
+
+The check is `refuseBackup`, called from `Open` **before the pool is built**. Reaching
+sqlitemigration is already too late: it would migrate the file. It reads the header on a connection
+of its own via `storage.ApplicationID`, and anything that is not a readable SQLite database falls
+through untouched — a path that does not exist is a new checkbook, and a foreign file gets the
+message `open` already produces for it. Do not move this guard into `web` or `cmd`: every way in
+arrives at `Open`, including the TUI that does not exist yet.
+
+**`setApplicationID` is the one write either operation makes**, and it is made to a working copy
+that has not yet earned a name. Its flags are exactly `OpenReadWrite` — no `OpenCreate`, and
+crucially **no `OpenWAL`**, which `sqlite.OpenConn` would apply among its defaults if no flags were
+given. A WAL-mode backup is not one self-contained file until it is checkpointed, so `verify`
+asserts both the stamp and `journal_mode != wal` alongside `quick_check`.
+
+**`backup.Restore(ctx, src, dest)` is the only route from a backup's records back into use** (BK-4):
+copy, stamp with `AppID`, then verify with `storage.Open`, which migrates the copy. It is
+deliberately the **only place an old schema is brought forward**, because it is the only place
+doing so is not destroying the thing that was kept — `OpenReadOnly` still refuses
+`ErrDatabaseTooOld` in place. `dest` is **never written over**. A checkbook is accepted where a
+backup is; a schema check on `src` is deliberately *not* made, since an old backup is exactly what
+this is for.
+
+`Restore`'s wraps use `%w: %w` rather than `%w: %v`, so a caller can tell `ErrMissingFile` from
+`ErrNotBackup` and `ErrDatabaseTooNew` from `ErrNotVerified` and give advice that fits.
 
 ### Storage
 
@@ -200,9 +236,12 @@ not the backup that was taken.
   in-memory one: a read-only connection reports the file's own journal mode, which is `delete` for
   anything `VACUUM INTO` produced, and setting it would be a write. `foreign_keys` is still
   enforced and verified.
-- `Store.ReadOnly()` reaches the UI as `layout.ReadOnly`. Every write action is **withheld rather
-  than offered and then refused**, and `web.withWritableCheckbook` answers one that arrives anyway
-  with a written explanation rather than SQLite's `attempt to write a readonly database`.
+- `Store.ReadOnly()` reaches the UI as `layout.ReadOnly`, and `Store.IsBackup()` as
+  `layout.IsBackup`. Every write action is **withheld rather than offered and then refused**, and
+  `web.withWritableCheckbook` answers one that arrives anyway with a written explanation rather
+  than SQLite's `attempt to write a readonly database`. `IsBackup` narrows `ReadOnly` rather than
+  restating it: "read-only" says what cannot be done here, "this is a backup" says what the file
+  is, which decides whether the next step is to close it or to restore it.
 
 ### Time, dates, and identifiers
 
@@ -400,7 +439,14 @@ HTML. No SQL and no balance arithmetic belong here.
   `dbFailed` rather than `fail` for a database error on a leased checkbook: it compares generations
   and answers the no-checkbook page instead of "the database reported an error while listing
   accounts".
-- **Control routes** — `/backup`, `/checkbook/close`, `/checkbook/open`, `/quit` — act on the file
+- **Restoring and opening stay two verbs.** `POST /checkbook/restore` writes a third file and
+  swaps nothing, so it needs no `Opener` and is registered unconditionally; the reader then opens
+  the result in the ordinary way. Rolling them together would mean one press both copies a file and
+  takes the register away from every tab the household has open. The form lives on the
+  no-checkbook page and nowhere else — it needs a name to write to, which is a pair of boxes rather
+  than a sidebar button — and its **Restore from** box prefills from the backup just closed.
+- **Control routes** — `/backup`, `/checkbook/close`, `/checkbook/open`, `/checkbook/restore`,
+  `/quit` — act on the file
   or the process rather than on a record. They are POST only and go through `Server.control`, which
   reads `Sec-Fetch-Site` and `Origin`. That is **not** the machinery PL-7 forbids: no token, no
   state, no principal, and requests with neither header (curl, httptest) are unaffected. Close and
@@ -440,7 +486,8 @@ pointers — if this list and the specification ever disagree, the specification
   edits to prior transactions.
 - **Explicit migrations, confirmed destructive actions, timestamped backups before risky
   operations** (ST-4, RG-3, BK-1). Backups exist now: `internal/backup`, and **Back up now** in the
-  sidebar. A backup is not a file that was written (BK-5).
+  sidebar. A backup is not a file that was written (BK-5), and **a backup is never opened for
+  writing** (BK-6) — see Backups above.
 - **No ads, nags, expiring features, or degraded old releases** (PV-3, PV-4).
 
 For scope questions apply SC-1's three tests; SC-2 lists what is out of scope and SC-3 fixes the
