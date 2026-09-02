@@ -9,7 +9,7 @@
 
     {{- /* Replaced out of band when a change is refused, so a stale tab is told
            rather than quietly corrected (CO-3). Empty the rest of the time. */ -}}
-    <div id="notice">{{if .Notice}}<p class="notice" role="alert">{{.Notice}}</p>{{end}}</div>
+    <div id="notice">{{if .RowNotice}}<p class="notice" role="alert">{{.RowNotice}}</p>{{end}}</div>
 
     {{if .Rows}}
         <table class="register">
@@ -169,5 +169,5 @@
 
 {{- /* The notice on its own, for an out-of-band swap. */ -}}
 {{define "notice"}}
-    <div id="notice" hx-swap-oob="true">{{if .Notice}}<p class="notice" role="alert">{{.Notice}}</p>{{end}}</div>
+    <div id="notice" hx-swap-oob="true">{{if .RowNotice}}<p class="notice" role="alert">{{.RowNotice}}</p>{{end}}</div>
 {{end}}

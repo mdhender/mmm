@@ -40,9 +40,11 @@ type registerPage struct {
 	// just tried to write to.
 	FormError string
 
-	// Notice reports something that happened to the register itself rather than
-	// to the entry form: a change refused because another tab got there first.
-	Notice string
+	// RowNotice reports something that happened to a row rather than to the
+	// entry form: a change refused because another tab got there first. It is
+	// named apart from the frame's Notice because the two are different things
+	// and an embedded field of the same name would quietly hide one of them.
+	RowNotice string
 
 	// OOB marks a fragment response rather than a whole page, so the totals
 	// carry hx-swap-oob and are replaced in place. It is false on every full
@@ -103,7 +105,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 	if len(accounts) == 0 {
 		s.render(w, r, http.StatusOK, "empty.gohtml",
-			struct{ layout }{s.pageLayout("No accounts yet", nil, 0)})
+			struct{ layout }{s.pageLayout(r, "No accounts yet", nil, 0)})
 		return
 	}
 
@@ -178,7 +180,7 @@ func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status i
 		names = append(names, c.Name)
 	}
 
-	page := buildRegisterPage(s.pageLayout(acct.Name, accounts, acct.ID), reg)
+	page := buildRegisterPage(s.pageLayout(r, acct.Name, accounts, acct.ID), reg)
 	page.Form = form
 	page.FormError = formError
 	page.Categories = names

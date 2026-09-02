@@ -62,6 +62,13 @@
     </nav>
 
     <main>
+        {{- /* Something that happened to the checkbook rather than to this page:
+               a backup written, a checkbook opened. It is in the frame because
+               the actions that raise one are in the frame, and any page can be
+               the one the reader was on when they pressed. The register's own
+               #notice div, below, is a different thing: it is swapped out of
+               band when a mark is refused (CO-3). */ -}}
+        {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
         {{template "main" .}}
     </main>
 </div>

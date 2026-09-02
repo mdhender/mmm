@@ -144,7 +144,7 @@ func (s *Server) afterStatusChange(w http.ResponseWriter, r *http.Request, accou
 	}
 
 	page := buildRegisterPage(layout{Title: acct.Name}, reg)
-	page.Notice = notice
+	page.RowNotice = notice
 	page.OOB = true
 
 	var row registerRow

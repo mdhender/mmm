@@ -84,6 +84,9 @@ func (s *Server) routes() {
 	// unmatched method on a register URL still gets a 405 from the mux.
 	s.mux.HandleFunc("POST /accounts/{id}/transactions", s.handleCreateTransaction)
 	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}/status", s.handleSetStatus)
+	// A control route: it acts on the file rather than on a record, so it is
+	// POST only and goes through the same-origin check in control.go.
+	s.mux.HandleFunc("POST /backup", s.control(s.handleBackup))
 	// The catch-all is last in precedence, not in registration: ServeMux picks
 	// the most specific pattern. It exists so a mistyped address gets a page
 	// that says what to do next rather than net/http's bare "404 page not
@@ -159,6 +162,13 @@ type layout struct {
 	Accounts []account.Account
 	ActiveID int64
 
+	// Notice reports something that happened to the checkbook rather than to
+	// the page in front of the reader: a backup written, a checkbook closed. It
+	// is in the frame rather than on a page because the actions that raise one
+	// are in the frame too, and every page can be the one the reader is on when
+	// they press.
+	Notice string
+
 	// Ephemeral marks a database held in memory -- the sample household -demo
 	// serves. Every page says so, because a register that keeps nothing looks
 	// exactly like one that does, and somebody entering real transactions into
@@ -169,13 +179,14 @@ type layout struct {
 // pageLayout builds the frame every page shares. It is one function so that a
 // new page cannot quietly omit the database it is editing (BK-3) or the mark
 // that says the database is a temporary one.
-func (s *Server) pageLayout(title string, accounts []account.Account, activeID int64) layout {
+func (s *Server) pageLayout(r *http.Request, title string, accounts []account.Account, activeID int64) layout {
 	return layout{
 		Title:     title,
 		Database:  s.store.Path(),
 		Version:   s.version,
 		Accounts:  accounts,
 		ActiveID:  activeID,
+		Notice:    noticeFor(r),
 		Ephemeral: s.store.IsMemory(),
 	}
 }
@@ -227,7 +238,7 @@ type errorPage struct {
 // them; the layout copes.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, status int, accounts []account.Account, heading, detail, nextStep string) {
 	s.render(w, r, status, "error.gohtml", errorPage{
-		layout:   s.pageLayout(heading, accounts, 0),
+		layout:   s.pageLayout(r, heading, accounts, 0),
 		Heading:  heading,
 		Detail:   detail,
 		NextStep: nextStep,
