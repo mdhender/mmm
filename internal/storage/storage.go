@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -252,6 +253,33 @@ func OpenMemory(ctx context.Context, name string) (*Store, error) {
 	}
 	uri := "file:" + name + "?mode=memory&cache=shared"
 	return open(ctx, uri, ":memory:"+name, PoolSize, true)
+}
+
+// OpenOrReadOnly opens the database at path the only way that file can be
+// opened: read-write when it is a checkbook, read-only when it is a backup.
+//
+// Whether a file is a backup is a fact about the file, written in its header,
+// not a choice the reader makes. Refusing a backup and asking somebody to say
+// it is one -- by ticking a box -- tells them something the program already
+// knew and leaves them stuck on a page until they say it back. So the caller
+// that just wants the file open uses this, and the box is left to mean what a
+// box can mean: open a checkbook that could be written to without writing to
+// it.
+//
+// This is not a hole in BK-6. The fallback is OpenReadOnly, which never writes;
+// Open still refuses a backup on its own, and refuseBackup is still the one
+// guard every route passes through.
+//
+// Every other failure is Open's, unchanged -- and a backup written by an older
+// release still fails, in OpenReadOnly, with ErrDatabaseTooOld. Such a file is
+// restored rather than read, because bringing it up to date in place is the one
+// thing that must not happen to it.
+func OpenOrReadOnly(ctx context.Context, path string) (*Store, error) {
+	store, err := Open(ctx, path)
+	if errors.Is(err, ErrIsBackup) {
+		return OpenReadOnly(ctx, path)
+	}
+	return store, err
 }
 
 // OpenReadOnly opens the database at path without migrating it and without ever

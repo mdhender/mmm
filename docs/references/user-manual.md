@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.20.1-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.20.2-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -343,10 +343,11 @@ first, reopened read-only, checked with `PRAGMA quick_check`, and only then give
 says so.
 
 **A backup is stamped as one.** SQLite databases carry an `application_id` in their header, and a
-backup is given a different one from a checkbook — `MMM~` rather than `MMM `. The program refuses
-to open a file carrying it for writing, so a backup cannot be migrated, typed into, or mistaken for
+backup is given a different one from a checkbook — `MMM~` rather than `MMM `. The program will not
+open a file carrying it for writing, so a backup cannot be migrated, typed into, or mistaken for
 your records, however it is named or wherever it is moved to. It is the file itself that says what
-it is; the timestamp in the name is for you, not for the program.
+it is; the timestamp in the name is for you, not for the program — which is why you can type a
+backup's path into the open box without knowing it is one and get it opened for reading.
 
 An existing backup is never written over. A second backup in the same second gets `-2` appended.
 
@@ -375,8 +376,7 @@ saying no checkbook is open, with status **503**. That page offers:
 
 - the name of the file that was closed, and **Back up now** for it — unless it was a backup, in
   which case the page says so and points at **Restore a backup** instead
-- a box to open a checkbook by path, with **Open read-only — nothing is written to the file**
-  under it
+- a box to open a checkbook by path, with **Open read-only — the file cannot be changed** under it
 - **Restore a backup**, with **Restore from** and **Restore to**
 - **Open the sample household instead**
 - **Quit**
@@ -393,17 +393,17 @@ what it wanted to hear.
 
 ## Opening a backup read-only
 
-Tick **Open read-only** to look at a backup. The box says what it does rather than what the file
-is: nothing is written to it. A backup opens this way and no other — opening one without the box
-ticked is refused, and the page says so and offers the two things you can do instead. An ordinary
-checkbook opens either way, so the box is also how you read one without risking a change to it.
+**A backup is opened read-only automatically.** Type its path into the open box and press
+**Open**: the program reads the header, sees a backup, and opens it for reading. You do not have to
+know the file is a backup, and you do not have to tick anything. Nothing is ever written to one.
+
+**Open read-only — the file cannot be changed** is for the other case: a checkbook that could be
+written to and is not going to be. Tick it to read your own records without any chance of changing
+them.
 
 Opening a database normally brings its schema up to date, so opening an older backup that way
 would rewrite it — and a backup that has been rewritten is no longer the backup you took. A
 read-only database is never migrated and never written to.
-
-The box stays yours to tick rather than being inferred, because it is also the safe way to look at
-an ordinary checkbook.
 
 A read-only register is marked in the frame of every page: the title bar and status bar turn
 slate, and a padlock sits at the right of the title bar — reading **Backup — nothing can be
@@ -574,7 +574,7 @@ is on screen.
 | A close arrives for a checkbook that is no longer the one open | 409 |
 | A write arrives for a database open read-only | 409 |
 | A backup is refused because there is no file to copy | 409 |
-| A backup is opened for writing | 422, on the page that offers to open one |
+| A backup is named in the open box | Opened read-only, 303 to the register |
 | A restore is refused | 422 |
 | A control request did not come from a page this program served | 403 |
 

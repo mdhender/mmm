@@ -101,16 +101,16 @@
                     <input type="text" name="path" value="{{.Path}}"
                            autocomplete="off" spellcheck="false" placeholder="checkbook.db" autofocus>
                 </label>
-                {{- /* The box says what it does -- nothing is written -- rather
-                       than naming the file it is usually used on. Ticking it is
-                       the only way into a backup, since opening one for writing
-                       is refused outright (BK-6), but it is not only for
-                       backups: it is also the safe way to look at an ordinary
-                       checkbook. Read-only never migrates, which is what makes
-                       looking at an older copy safe. */ -}}
+                {{- /* The box is for a checkbook that could be written to and
+                       is not going to be. It is not how a backup is opened: a
+                       backup says in its own header what it is, so it is opened
+                       read-only whether the box is ticked or not, and nobody
+                       has to know what they are holding before they can look at
+                       it. Read-only never migrates, which is what makes looking
+                       at an older copy safe. */ -}}
                 <label class="f-readonly checkbox">
                     <input type="checkbox" name="readonly" value="1"{{if .ReadOnly}} checked{{end}}>
-                    Open read-only &mdash; nothing is written to the file
+                    Open read-only &mdash; the file cannot be changed
                 </label>
                 <div class="f-add">
                     <button type="submit">Open</button>
@@ -118,8 +118,8 @@
             </div>
             <p class="muted entry-note">
                 A file that does not exist yet is created as a new, empty checkbook. A folder that
-                does not exist is reported rather than made. A backup opens read-only and no other
-                way; a checkbook opens either way.
+                does not exist is reported rather than made. A backup is opened read-only
+                automatically, ticked or not, and nothing is ever written to one.
             </p>
         </form>
 

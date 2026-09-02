@@ -283,9 +283,9 @@ func browserOpener(log *slog.Logger) web.Opener {
 			return openStore(ctx, path, true)
 		}
 		if req.ReadOnly {
-			// A backup opened read-write is no longer a backup: Open migrates on
-			// open, so merely looking at an older copy would rewrite the thing
-			// that was kept.
+			// The box was ticked, so even a writable checkbook is opened for
+			// reading. A backup needs no box: openStore opens one read-only on
+			// its own.
 			return storage.OpenReadOnly(ctx, path)
 		}
 		return openStore(ctx, path, false)
@@ -306,7 +306,10 @@ func openStore(ctx context.Context, path string, demo bool) (*storage.Store, err
 		return store, nil
 	}
 
-	store, err := storage.Open(ctx, path)
+	// OpenOrReadOnly rather than Open: a backup opens read-only rather than
+	// being refused with a message asking the reader to say it is a backup.
+	// Nothing is ever written to one either way (BK-6).
+	store, err := storage.OpenOrReadOnly(ctx, path)
 	if err != nil {
 		if errors.Is(err, storage.ErrMissingDirectory) {
 			// ST-6: a mistyped path is reported, never built. Say which directory

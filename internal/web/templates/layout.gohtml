@@ -39,7 +39,7 @@
         {{- /* A backup. Named as one rather than described as read-only,
                because "this is a backup" is the fact that decides what the
                reader does next: close it, or restore it. */ -}}
-        <span class="locked" title="A backup, opened for reading. It is never written to: the moment it were, it would stop being the copy that was taken.">
+        <span class="locked" title="A backup. It is opened for reading automatically and never written to: the moment it were, it would stop being the copy that was taken.">
             <span aria-hidden="true">&#128274;</span> Backup &mdash; nothing can be changed
         </span>
     {{else if .ReadOnly}}
@@ -138,7 +138,7 @@
             Database: <code>{{.Database}}</code> &mdash; held in memory, nothing is saved
         </span>
     {{else if .IsBackup}}
-        <span title="A backup, opened for reading. Close it and restore it to work from these records.">
+        <span title="A backup. It is opened for reading automatically. Close it and restore it to work from these records.">
             <span class="temporary-mark" aria-hidden="true">&#128274;</span>
             Backup: <code>{{.Database}}</code> &mdash; open for reading only
         </span>

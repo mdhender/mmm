@@ -134,6 +134,15 @@ remembering to tick a box. Both ids **must never change**, for the same reason `
 The name is a hint for the household, never the enforcement — it does not survive a rename and the
 header does.
 
+**`OpenOrReadOnly` is what callers that just want a file open should use.** It is `Open`, falling
+back to `OpenReadOnly` on `ErrIsBackup`, and both `cmd/checkbook`'s `openStore` and the browser's
+opener go through it. Whether a file is a backup is written in its header, so refusing it and
+asking the reader to tick a box saying so tells them something the program already knew and leaves
+them stuck on a page until they say it back. The read-only box on the open form therefore means the
+one thing a box can mean -- open a checkbook that *could* be written to without writing to it --
+and BK-6 is untouched: the fallback is `OpenReadOnly`, and `Open` still refuses on its own. An old
+backup still fails, in `OpenReadOnly`, with `ErrDatabaseTooOld`; such a file is restored, not read.
+
 The check is `refuseBackup`, called from `Open` **before the pool is built**. Reaching
 sqlitemigration is already too late: it would migrate the file. It reads the header on a connection
 of its own via `storage.ApplicationID`, and anything that is not a readable SQLite database falls

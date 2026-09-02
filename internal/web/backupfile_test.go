@@ -17,8 +17,9 @@ import (
 )
 
 // fileOpener is the Opener the command supplies, minus the flags and the sample
-// data: it opens a real file, read-only when asked. These tests are about what
-// the browser does with a backup, which needs a backup on disk.
+// data: it opens a real file, read-only when asked and read-only anyway when
+// the file turns out to be a backup. These tests are about what the browser
+// does with a backup, which needs a backup on disk.
 func fileOpener(t *testing.T) web.Opener {
 	t.Helper()
 
@@ -26,7 +27,7 @@ func fileOpener(t *testing.T) web.Opener {
 		if req.ReadOnly {
 			return storage.OpenReadOnly(ctx, req.Path)
 		}
-		return storage.Open(ctx, req.Path)
+		return storage.OpenOrReadOnly(ctx, req.Path)
 	}
 }
 
@@ -56,37 +57,30 @@ func closeCheckbook(t *testing.T, h *web.Server) {
 	}
 }
 
-// TestOpeningABackupIsRefused is the bug this rule was written for, from the
-// browser: the box was there and unticked, and the register came up on a backup
-// which was then migrated and written to.
-func TestOpeningABackupIsRefused(t *testing.T) {
+// TestOpeningABackupOpensItReadOnly is the bug this rule was written for, from
+// the browser: the box was there and unticked, and the register came up on a
+// backup which was then migrated and written to. It is still never written to --
+// but the answer is now to open it the one way it can be opened rather than to
+// refuse it and ask the reader to say what the file already says about itself.
+func TestOpeningABackupOpensItReadOnly(t *testing.T) {
 	h, path := withBackup(t)
 	closeCheckbook(t, h)
 
+	// The box is not ticked, and the reader is not assumed to know this is a
+	// backup. The header says so, which is enough.
 	w := postFromPage(t, h, "/checkbook/open", url.Values{"path": {path}})
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("opening a backup = %d, want 422: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("opening a backup = %d, want 303: %s", w.Code, w.Body.String())
 	}
 
-	body := w.Body.String()
-	if !strings.Contains(body, "That file is a backup") {
-		t.Error("the refusal does not say the file is a backup")
-	}
-	for _, want := range []string{
-		"open it read-only", // the way to look at it
-		"restore it",        // the way to work from it
-		"Nothing was written",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the refusal does not mention %q (RG-4)", want)
-		}
-	}
-	if strings.Contains(body, "not a checkbook") {
-		t.Error("a backup was described as if it were another program's file")
+	body := get(t, h, "/accounts/1").Body.String()
+	if !strings.Contains(body, "Backup &mdash; nothing can be changed") &&
+		!strings.Contains(body, "Backup — nothing can be changed") {
+		t.Error("the frame does not say this is a backup rather than merely read-only")
 	}
 
-	// And the file it refused is untouched: no -wal beside it, which is what
-	// opening one for writing would have left.
+	// And the file is untouched: no -wal beside it, which is what opening one
+	// for writing would have left (BK-6).
 	for _, sidecar := range []string{path + "-wal", path + "-shm"} {
 		if _, err := os.Stat(sidecar); err == nil {
 			t.Errorf("%s was created, so the backup was opened for writing", filepath.Base(sidecar))

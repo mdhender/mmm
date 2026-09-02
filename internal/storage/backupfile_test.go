@@ -100,6 +100,46 @@ func TestOpenReadOnlyAcceptsABackup(t *testing.T) {
 	}
 }
 
+// TestOpenOrReadOnlyOpensABackupForReading. Whether a file is a backup is
+// written in its header, so the caller that just wants it open does not have to
+// be told: it is opened the one way it can be, and nothing is written to it.
+func TestOpenOrReadOnlyOpensABackupForReading(t *testing.T) {
+	path := checkbookOnDisk(t)
+	markAsBackup(t, path)
+
+	store, err := storage.OpenOrReadOnly(t.Context(), path)
+	if err != nil {
+		t.Fatalf("OpenOrReadOnly on a backup: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	if !store.IsBackup() || !store.ReadOnly() {
+		t.Errorf("IsBackup() = %v, ReadOnly() = %v; want both true", store.IsBackup(), store.ReadOnly())
+	}
+	// BK-6 as the filesystem sees it: opening for writing would have converted
+	// the file to WAL and left a -wal beside it.
+	for _, sidecar := range []string{path + "-wal", path + "-shm"} {
+		if _, err := os.Stat(sidecar); err == nil {
+			t.Errorf("%s exists, so the backup was opened for writing", sidecar)
+		}
+	}
+}
+
+// TestOpenOrReadOnlyOpensACheckbookForWriting: the fallback is for backups and
+// nothing else. An ordinary checkbook still opens the ordinary way, or the box
+// on the open form would have nothing left to mean.
+func TestOpenOrReadOnlyOpensACheckbookForWriting(t *testing.T) {
+	store, err := storage.OpenOrReadOnly(t.Context(), checkbookOnDisk(t))
+	if err != nil {
+		t.Fatalf("OpenOrReadOnly: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	if store.ReadOnly() || store.IsBackup() {
+		t.Errorf("ReadOnly() = %v, IsBackup() = %v; want both false", store.ReadOnly(), store.IsBackup())
+	}
+}
+
 // TestOpenReadOnlyOnAnOrdinaryCheckbookIsNotABackup: IsBackup narrows ReadOnly
 // rather than restating it, and the two must not be allowed to blur.
 func TestOpenReadOnlyOnAnOrdinaryCheckbookIsNotABackup(t *testing.T) {

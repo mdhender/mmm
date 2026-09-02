@@ -91,15 +91,19 @@ func DescribeOpenError(err error, database string) Problem {
 		p.Docs = []Doc{docFirstFile, docManual}
 
 	case errors.Is(err, storage.ErrIsBackup):
+		// The command opens a backup read-only rather than refusing it
+		// (storage.OpenOrReadOnly), so a reader should never arrive here. The
+		// page is kept because storage.Open still reports this on its own, and
+		// a caller that asks for a backup read-write should be answered in
+		// words rather than by whatever the catch-all would say.
 		p.Heading = "That file is a backup"
 		// Worded to hold on both pages this can reach. The startup problem page
 		// is a dead end with no form on it, so a step that says "press Open
 		// again" would be an instruction the reader cannot follow.
 		p.Steps = []string{
+			"A backup is only ever opened for reading, so something asked for this one in a way it cannot be given. Nothing was written: a backup opened for writing stops being the copy that was taken.",
 			"Open your checkbook instead — the file you keep your records in, rather than one of the copies beside it. Backups are named checkbook-YYYYMMDD-HHMMSS.db, for the moment they were taken.",
-			"To look at this one, open it read-only. There is a box for that under the path, and reading a backup changes nothing: it is how you check a backup is the one you want before you use it.",
 			"To work from these records, restore it. Restoring copies the backup to a new file and brings the copy up to date, and the backup itself is left exactly as it is.",
-			"Nothing was written. A backup opened for writing stops being the copy that was taken, so the program will not do it.",
 		}
 		p.Docs = []Doc{docRestore, docManual}
 
