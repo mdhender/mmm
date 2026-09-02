@@ -9,8 +9,9 @@
 *.swp
 .DS_Store
 
-# IDE and agent folders
+# IDE and agent folders and files
 .idea/
+*-plan.md
 
 # build files
 /checkbook
