@@ -23,9 +23,19 @@
            it fails to load, the same form posts and the page reloads. */ -}}
     <script src="/static/htmx.min.js" defer></script>
 </head>
-<body>
+<body{{if .Ephemeral}} class="ephemeral"{{end}}>
+{{- /* A database held in memory is marked wherever the frame is: at the top,
+       where somebody about to type looks, and at the bottom beside the path,
+       where they look to see which file they are editing. A register that keeps
+       nothing must not look like one that does. The hourglass is a placeholder
+       for a better mark. */ -}}
 <header class="topbar">
     <a class="brand" href="/">Checkbook</a>
+    {{if .Ephemeral}}
+        <span class="temporary" title="Sample data held in memory. It is discarded when the program stops, and nothing is written to disk.">
+            <span aria-hidden="true">&#8987;</span> Demo &mdash; nothing is saved
+        </span>
+    {{end}}
 </header>
 
 <div class="shell">
@@ -57,7 +67,14 @@
 </div>
 
 <footer class="statusbar">
-    <span title="The file holding your records. Back this file up.">Database: <code>{{.Database}}</code></span>
+    {{if .Ephemeral}}
+        <span title="Sample data held in memory. It is discarded when the program stops, and nothing is written to disk.">
+            <span class="temporary-mark" aria-hidden="true">&#8987;</span>
+            Database: <code>{{.Database}}</code> &mdash; held in memory, nothing is saved
+        </span>
+    {{else}}
+        <span title="The file holding your records. Back this file up.">Database: <code>{{.Database}}</code></span>
+    {{end}}
     <span class="version">v{{.Version}}<a class="repo"
               href="https://github.com/mdhender/mmm/issues"
               target="_blank" rel="noopener noreferrer"

@@ -346,6 +346,12 @@ HTML. No SQL and no balance arithmetic belong here.
 - **`register.gohtml` defines `row`, `totals`, and `notice`**, rendered both inside the page and
   on their own. A change to a register row belongs in the `row` template, or a swapped-in row and
   a reloaded page will disagree.
+- **An in-memory database is marked in the frame.** `layout.Ephemeral` comes from
+  `store.IsMemory()`, not from the `-demo` flag, so the mark follows the database that keeps
+  nothing rather than the way the program was started. Both bars turn amber and an hourglass is
+  shown top and bottom -- a register that keeps nothing must not look like one that does. Every
+  page goes through `Server.pageLayout`, which is what stops a new page quietly omitting it, or
+  the database path BK-3 requires.
 - **Do not add authentication, sessions, or CSRF tokens** (PL-7).
 
 ## Constraints that override normal defaults

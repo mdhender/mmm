@@ -502,6 +502,30 @@ func TestConcurrentReadDuringWrite(t *testing.T) {
 	}
 }
 
+// TestIsMemory: the interface marks a database that keeps nothing, so the
+// answer has to come from how the Store was opened rather than from the shape
+// of its path.
+func TestIsMemory(t *testing.T) {
+	for _, name := range []string{memoryName(t), ""} {
+		mode := "shared"
+		if name == "" {
+			mode = "private"
+		}
+		t.Run(mode, func(t *testing.T) {
+			if s := openMemory(t, name); !s.IsMemory() {
+				t.Errorf("IsMemory() = false for %s, want true", s.Path())
+			}
+		})
+	}
+
+	t.Run("file", func(t *testing.T) {
+		s, path, _ := open(t)
+		if s.IsMemory() {
+			t.Errorf("IsMemory() = true for %s, want false", path)
+		}
+	})
+}
+
 // memoryName turns a test name into one OpenMemory accepts: subtest names
 // contain "/", which is rejected so a name cannot smuggle in a URI parameter.
 func memoryName(t *testing.T) string {

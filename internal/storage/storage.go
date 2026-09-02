@@ -69,8 +69,9 @@ const PoolSize = 10
 // A Store is safe for concurrent use: callers borrow a connection with Conn and
 // must return it with Put.
 type Store struct {
-	path string
-	pool *sqlitemigration.Pool
+	path     string
+	inMemory bool
+	pool     *sqlitemigration.Pool
 }
 
 // Open opens the database at path, creating it if it does not exist, and brings
@@ -188,7 +189,7 @@ func open(ctx context.Context, uri, displayPath string, poolSize int, inMemory b
 		return nil, fmt.Errorf("%s: %w", displayPath, err)
 	}
 
-	return &Store{path: displayPath, pool: pool}, nil
+	return &Store{path: displayPath, inMemory: inMemory, pool: pool}, nil
 }
 
 // checkSchemaVersion compares the database's user_version against the number of
@@ -254,6 +255,15 @@ func randomToken() (string, error) {
 // The UI is required to show it (SPECIFICATION.md BK-3): a household that cannot
 // tell which file it is editing cannot back the right one up.
 func (s *Store) Path() string { return s.path }
+
+// IsMemory reports whether the database is held in memory, and so is discarded
+// when the program stops.
+//
+// The interface shows this rather than leaving it to the path: a register that
+// keeps nothing looks exactly like one that does, and the difference is the
+// whole difference. It is a property of the database, not of a flag, so it stays
+// true however the Store was opened.
+func (s *Store) IsMemory() bool { return s.inMemory }
 
 // Conn borrows a connection from the pool. The caller must return it with Put,
 // conventionally via defer.

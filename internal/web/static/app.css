@@ -13,6 +13,11 @@
     --panel: #f2efe8;
     --negative: #a11b1b;
     --accent: #1c4f7c;
+    /* A database held in memory is marked in amber: visible at a glance, and
+       not the red that means an error -- the demo is working correctly. */
+    --temporary: #8a5000;
+    --temporary-panel: #f7ecd4;
+    --temporary-rule: #d8a13a;
 }
 
 * { box-sizing: border-box; }
@@ -36,6 +41,24 @@ a { color: var(--accent); }
     background: var(--panel);
 }
 .brand { font-weight: 600; text-decoration: none; color: var(--ink); }
+
+/* The temporary-database marks, top and bottom. The top bar carries the words,
+   because it is where somebody about to type is looking. */
+.ephemeral .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--temporary-panel);
+    border-bottom-color: var(--temporary-rule);
+}
+.topbar .temporary { color: var(--temporary); font-size: .8rem; font-weight: 600; }
+.ephemeral .statusbar {
+    background: var(--temporary-panel);
+    border-top-color: var(--temporary-rule);
+    color: var(--temporary);
+}
+.ephemeral .statusbar code { color: var(--temporary); }
+.statusbar .temporary-mark { font-size: .9rem; }
 
 /* Default stretch alignment, so the divider beside the account list runs the
    full height of the window rather than stopping under the last account. */

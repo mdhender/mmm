@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.14.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.14.1-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -41,7 +41,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.14.0-beta
+checkbook 0.14.1-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -125,7 +125,8 @@ holding your records.
 ## The register screen
 
 The window has four regions: a title bar, the account list on the left, the register on the
-right, and a status bar along the bottom.
+right, and a status bar along the bottom. Both bars turn amber when the database is a temporary
+one; see [A demo is marked as one](#a-demo-is-marked-as-one).
 
 ### Account list
 
@@ -288,6 +289,18 @@ time.
 If the entry is refused, the register comes back with the entry still in the form and a message
 above it saying what was wrong and what to do about it. Nothing is written. The transaction and
 its category are written together or not at all.
+
+### A demo is marked as one
+
+A database held in memory — what `-demo` serves — is marked in the frame of every page, so no
+page can be mistaken for the register holding your records:
+
+- the title bar and the status bar are amber rather than grey
+- an hourglass with **Demo — nothing is saved** sits at the right of the title bar
+- the status bar reads `Database: :memory:checkbook-demo — held in memory, nothing is saved`
+
+The mark follows the database, not the `-demo` flag: any register whose database is held in
+memory carries it. A register on a file never does.
 
 ### Status bar
 

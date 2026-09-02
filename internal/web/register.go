@@ -102,11 +102,8 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(accounts) == 0 {
-		s.render(w, r, http.StatusOK, "empty.gohtml", struct{ layout }{layout{
-			Title:    "No accounts yet",
-			Database: s.store.Path(),
-			Version:  s.version,
-		}})
+		s.render(w, r, http.StatusOK, "empty.gohtml",
+			struct{ layout }{s.pageLayout("No accounts yet", nil, 0)})
 		return
 	}
 
@@ -181,13 +178,7 @@ func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status i
 		names = append(names, c.Name)
 	}
 
-	page := buildRegisterPage(layout{
-		Title:    acct.Name,
-		Database: s.store.Path(),
-		Version:  s.version,
-		Accounts: accounts,
-		ActiveID: acct.ID,
-	}, reg)
+	page := buildRegisterPage(s.pageLayout(acct.Name, accounts, acct.ID), reg)
 	page.Form = form
 	page.FormError = formError
 	page.Categories = names

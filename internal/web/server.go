@@ -158,6 +158,26 @@ type layout struct {
 	// Accounts fills the account list, and ActiveID marks the one being read.
 	Accounts []account.Account
 	ActiveID int64
+
+	// Ephemeral marks a database held in memory -- the sample household -demo
+	// serves. Every page says so, because a register that keeps nothing looks
+	// exactly like one that does, and somebody entering real transactions into
+	// the demo would lose them without ever being told.
+	Ephemeral bool
+}
+
+// pageLayout builds the frame every page shares. It is one function so that a
+// new page cannot quietly omit the database it is editing (BK-3) or the mark
+// that says the database is a temporary one.
+func (s *Server) pageLayout(title string, accounts []account.Account, activeID int64) layout {
+	return layout{
+		Title:     title,
+		Database:  s.store.Path(),
+		Version:   s.version,
+		Accounts:  accounts,
+		ActiveID:  activeID,
+		Ephemeral: s.store.IsMemory(),
+	}
 }
 
 // render writes a page, or an error page if the template fails.
@@ -207,12 +227,7 @@ type errorPage struct {
 // them; the layout copes.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, status int, accounts []account.Account, heading, detail, nextStep string) {
 	s.render(w, r, status, "error.gohtml", errorPage{
-		layout: layout{
-			Title:    heading,
-			Database: s.store.Path(),
-			Version:  s.version,
-			Accounts: accounts,
-		},
+		layout:   s.pageLayout(heading, accounts, 0),
 		Heading:  heading,
 		Detail:   detail,
 		NextStep: nextStep,

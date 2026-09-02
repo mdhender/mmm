@@ -248,12 +248,7 @@ func (s *Server) createAccountFailed(w http.ResponseWriter, r *http.Request, acc
 // have to be kept in step with this one.
 func (s *Server) renderNewAccount(w http.ResponseWriter, r *http.Request, status int, accounts []account.Account, form accountForm, formError string) {
 	page := newAccountPage{
-		layout: layout{
-			Title:    "New account",
-			Database: s.store.Path(),
-			Version:  s.version,
-			Accounts: accounts,
-		},
+		layout:    s.pageLayout("New account", accounts, 0),
 		Form:      form,
 		FormError: formError,
 	}
