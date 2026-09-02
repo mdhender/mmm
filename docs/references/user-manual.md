@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.8.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.9.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -33,9 +33,9 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.8.0-beta
+checkbook 0.9.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
-register:  http://127.0.0.1:53219/
+register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
 ```
 
@@ -45,13 +45,37 @@ press Ctrl+C to stop
 | --- | --- | --- |
 | `-db PATH` | `checkbook.db` | Database file to open. A relative path is resolved against the current directory. |
 | `-host ADDR` | `127.0.0.1` | Address to listen on. Only `127.0.0.1`, `::1`, other loopback addresses, and the name `localhost` are accepted. |
-| `-port N` | `0` | Port to listen on. `0` asks the operating system for a free port, which is printed at startup. |
+| `-port N` | `8842` | Port to listen on. `0` asks the operating system for a free port instead, which is printed at startup. |
 | `-open` | `true` | Open the register in the default browser at startup. Use `-open=false` to suppress. |
 | `-demo` | `false` | Serve a sample household held in memory. No file is read or written. |
 | `-version` | — | Print the version and exit. |
 
 Options are Go flags: `-db path` and `-db=path` are both accepted; boolean options must be
 written `-open=false` to turn them off.
+
+## The address
+
+The register is served at `http://127.0.0.1:8842/` unless `-host` or `-port` says otherwise. The
+port is fixed rather than chosen by the system, so the address is the same every time the program
+runs and can be bookmarked.
+
+Only one program can hold a port. Starting a second copy on the same port does not start a second
+register; it reports the address and exits with status 1:
+
+```
+checkbook: port 8842 is already in use
+
+If your checkbook is already open, this is where it is:
+    http://127.0.0.1:8842/
+
+Open that address, or close the copy that is running before starting
+another. If something else on this machine is using port 8842, start
+this copy on a different one:
+    -port 8843
+```
+
+The program does not check what is listening, and does not claim to know. To run a second
+checkbook on another database at the same time, give it its own port with `-port`.
 
 ## The database file
 
@@ -178,7 +202,7 @@ Any other address returns a page reporting that the address is not served. Any r
 not a `GET` is refused with status 405.
 
 Accounts may be opened in several browser tabs at once, and more than one copy of the program may
-run at the same time, including on the same database. SQLite coordinates their access to the file.
+run at the same time, including on the same database, provided each is given its own `-port`. SQLite coordinates their access to the file.
 Each window shows the register as of when it was loaded and does not refresh when another writes;
 a write that would overwrite a change made since the page was loaded is refused rather than
 applied silently.
@@ -223,7 +247,8 @@ such as a database that will not open, does not hold the console.
 | --- | --- |
 | `-host X is not a loopback address; the register is served only to this machine` | `-host` names an address reachable from another machine. |
 | `-host "X" is not a loopback address; use 127.0.0.1, ::1, or localhost` | `-host` is a name other than `localhost`. |
-| `listen on ADDR: ... bind: address already in use` | Another program, or another copy of this one, holds the port named by `-port`. |
+| `port N is already in use` | Something already holds the port. See [The address](#the-address). |
+| `listen on ADDR: ...` | The address could not be listened on for some other reason. |
 
 A browser that cannot be opened is reported as a warning; the program continues, and the address
 is on screen.

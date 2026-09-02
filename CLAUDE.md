@@ -264,7 +264,14 @@ actually hits — a bad path, a foreign file, a schema from a newer release — 
 the browser, and a browser that fails to open leaves the program *running*, so the console stays
 up with the address in it regardless.
 
-**Running two copies at once is allowed, including on one database.** Do not add a lock for it.
+**`DefaultPort` is 8842, and fixed on purpose.** An address that changes every run cannot be
+bookmarked, which leaves someone who closed the browser with no way back to a program that is
+still running -- so they start it again, and again. The fixed port also makes the second start
+fail to bind, which says "already open, here is where" truthfully and without asking anything.
+`-port 0` still asks the system for a free one.
+
+**Running two copies at once is allowed, including on one database** -- the second just needs its
+own `-port`. Do not add a lock for it.
 SQLite coordinates multi-process access, and CO-3 is enforced by the `updated_at` token in the
 schema, which does not care whether the competing writer is another connection, another tab, or
 another process. Two copies are the two-tab case the project already supports by design.

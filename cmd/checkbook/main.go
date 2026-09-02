@@ -36,6 +36,18 @@ import (
 // main does not repeat it.
 const errReported = cerrs.Error("already reported")
 
+// DefaultPort is fixed rather than left to the system so that the register has a
+// stable address.
+//
+// An address that changes every run cannot be bookmarked, which leaves someone
+// who has closed the browser with no way back to a program that is still
+// running -- and so starting it again, repeatedly. A fixed port also makes the
+// second start fail to bind, which is a truthful way of saying the checkbook is
+// already open without going looking for it.
+//
+// Pass -port 0 to ask the system for a free one instead.
+const DefaultPort = 8842
+
 // demoName names the in-memory database used by -demo; demoDatabase is what a
 // Store opened under that name reports as its path, and what the UI shows.
 const (
@@ -48,7 +60,7 @@ const (
 var (
 	dbPath      = flag.String("db", "checkbook.db", "path to the checkbook database")
 	host        = flag.String("host", "127.0.0.1", "loopback address to listen on")
-	port        = flag.Int("port", 0, "port to listen on; 0 asks the system for a free one")
+	port        = flag.Int("port", DefaultPort, "port to listen on; 0 asks the system for a free one")
 	openBrowser = flag.Bool("open", true, "open the register in the default browser")
 	demo        = flag.Bool("demo", false, "serve a sample household from memory, touching no files")
 	showVersion = flag.Bool("version", false, "print the version and exit")
@@ -95,6 +107,12 @@ func run() (browserOpened bool, err error) {
 	addr := net.JoinHostPort(*host, fmt.Sprint(*port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
+		// Much the most likely cause is the household's own checkbook, already
+		// open and forgotten. Say where it is rather than reporting a bind
+		// failure they can do nothing with.
+		if *port != 0 && isAddrInUse(err) {
+			return false, portInUse(os.Stderr, *host, *port)
+		}
 		return false, fmt.Errorf("listen on %s: %w", addr, err)
 	}
 	defer listener.Close()

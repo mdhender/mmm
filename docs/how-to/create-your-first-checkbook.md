@@ -51,8 +51,12 @@ New-Item -ItemType Directory -Force ~\Documents\checkbook
 go run ./cmd/checkbook -db ~/Documents/checkbook/checkbook.db
 ```
 
-The file is created, and your browser opens on the register. Because the database is empty, the
-page says there are no accounts yet — that is the expected result at this stage.
+The file is created, and your browser opens on the register at `http://127.0.0.1:8842/`. Because
+the database is empty, the page says there are no accounts yet — that is the expected result at
+this stage.
+
+**Bookmark that address.** It is the same every time the program runs, so it is how you get back
+to the register after closing the browser without starting a second copy.
 
 If you would rather it did not open a browser, add `-open=false` and use the address it prints.
 
