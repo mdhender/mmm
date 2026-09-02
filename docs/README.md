@@ -67,6 +67,7 @@ the specification wins:
 - [architecture.md](architecture.md), [project-structure.md](project-structure.md)
 - [sqlite-store.md](sqlite-store.md), [data-imports.md](data-imports.md),
   [reconciliation.md](reconciliation.md)
+- [restore-from-backup.md](restore-from-backup.md) — the one-press restore, not built yet
 - [local-web-ui.md](local-web-ui.md), [htmx-web-ui.md](htmx-web-ui.md),
   [local-text-ui.md](local-text-ui.md)
 - [inspiration.md](inspiration.md)
