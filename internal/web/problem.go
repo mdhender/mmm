@@ -32,6 +32,7 @@ func doc(title, path string) Doc {
 var (
 	docUpgrade   = doc("How to upgrade the application", "docs/how-to/upgrade-the-application.md")
 	docFirstFile = doc("How to create your first checkbook", "docs/how-to/create-your-first-checkbook.md")
+	docRestore   = doc("How to restore a backup", "docs/how-to/restore-a-backup.md")
 	docReport    = doc("How to report a problem", "docs/how-to/report-a-problem.md")
 	docManual    = doc("User manual", "docs/references/user-manual.md")
 )
@@ -79,7 +80,7 @@ func DescribeOpenError(err error, database string) Problem {
 			"If you meant to go back to an older version, restore the backup you took before upgrading and open that copy instead.",
 			"Do not keep using this file with this version. It has been left untouched, and that is the safe state.",
 		}
-		p.Docs = []Doc{docUpgrade, docReport}
+		p.Docs = []Doc{docUpgrade, docRestore, docReport}
 
 	case errors.Is(err, storage.ErrNotCheckbook):
 		p.Heading = "That file is not a checkbook"
@@ -95,7 +96,7 @@ func DescribeOpenError(err error, database string) Problem {
 			"Copy the file, then open the copy without the read-only box ticked. Opening it normally brings its schema up to date, and doing that to a copy leaves the backup itself untouched.",
 			"Do not open this file normally. Bringing it up to date would rewrite it, and a backup that has been rewritten is no longer the backup you took.",
 		}
-		p.Docs = []Doc{docUpgrade, docManual}
+		p.Docs = []Doc{docRestore, docUpgrade, docManual}
 
 	case errors.Is(err, storage.ErrMissingFile):
 		p.Heading = "There is no file there"
@@ -120,7 +121,7 @@ func DescribeOpenError(err error, database string) Problem {
 			"Keep the current file. Do not delete it: it is what shows what went wrong.",
 			"Report the problem, including both version numbers from the message below.",
 		}
-		p.Docs = []Doc{docReport, docUpgrade}
+		p.Docs = []Doc{docRestore, docReport, docUpgrade}
 
 	default:
 		p.Heading = "The checkbook could not be opened"
@@ -129,7 +130,7 @@ func DescribeOpenError(err error, database string) Problem {
 			"If the file is damaged, restore your most recent backup and open that copy instead.",
 			"Report the problem, including the message below.",
 		}
-		p.Docs = []Doc{docReport, docManual}
+		p.Docs = []Doc{docRestore, docReport, docManual}
 	}
 
 	return p

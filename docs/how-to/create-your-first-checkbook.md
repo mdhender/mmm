@@ -26,8 +26,8 @@ Two places to avoid:
 - **Inside a folder that syncs continuously** — Dropbox, iCloud Drive, OneDrive, Google Drive.
   While the program runs, the database is spread across the main file and a `-wal` companion, and
   a sync service that copies them at different moments can capture a file that no longer makes
-  sense. Sync folders are a fine home for the backup *copies* you make while the program is
-  stopped, which is covered in step 5.
+  sense. Sync folders are a fine home for the backup *copies* the program makes for you, which is
+  covered in step 6.
 
 ## 2. Create the folder yourself
 
@@ -92,49 +92,47 @@ Two places name the database, and they should agree with the path you chose:
 Check this now. It is the one habit that keeps you from carefully backing up a file you are not
 actually using.
 
-## 6. Stop the program, then make your first backup
+## 6. Make your first backup
 
-Press **Ctrl+C** in the terminal.
+In the sidebar, under **This checkbook**, press **Back up now**.
 
-Now look in the folder. You should see `checkbook.db` alone — while the program runs there are
-also `checkbook.db-wal` and `checkbook.db-shm` files, and stopping it folds those back into the
-database. **Copy the file only when the program is stopped**, or the copy can be missing the most
-recent changes.
+The program writes a copy beside your database, named for the moment it was taken —
+`checkbook-20260902-141530.db`. It does not stop to do it, and you do not have to close anything
+first. The page comes back naming the file it wrote.
 
-Seeing `checkbook.db` on its own is the reliable way to tell the program has really stopped.
+That copy is a complete backup. There is nothing else to export and no format to convert: the
+whole checkbook is that one file. It is a **verified** copy — the program reopened it and read it
+back before giving it a backup's name, so a copy that would not open is deleted rather than left
+sitting in your folder looking like insurance.
 
-Make the copy:
+Now look in the folder. Beside `checkbook.db` you will also see `checkbook.db-wal` and
+`checkbook.db-shm` while the program is running; the backup has no such companions, which is what
+makes it a single file you can copy anywhere.
 
-```sh
-cd ~/Documents/checkbook
-cp checkbook.db "checkbook-$(date +%Y%m%d-%H%M%S).db"
-```
+**Copy that backup somewhere else** — another disk, or a sync folder — while you are thinking of
+it. A backup on the same disk as the original protects you from mistakes, not from the disk.
 
-On Windows PowerShell:
-
-```powershell
-cd ~\Documents\checkbook
-Copy-Item checkbook.db "checkbook-$(Get-Date -Format yyyyMMdd-HHmmss).db"
-```
-
-That copy is a complete backup. There is nothing else to export and no format to convert — the
-whole checkbook is that one file.
-
-Practise the restore once, now, while the stakes are zero: delete `checkbook.db`, rename the copy
-back to `checkbook.db`, and start the program again. It should come up on the same account you
-just made. An untested backup is a guess.
+Practise the restore once, now, while the stakes are zero.
+[How to restore a backup](restore-a-backup.md) is four steps and takes a minute. An untested
+backup is a guess.
 
 ## 7. See what a filled-in register looks like
 
-A household with a year of records in it looks like this:
+A household with a year of records in it looks like this. Press **Close checkbook** in the
+sidebar, confirm, and then choose **Open the sample household instead** on the page you land on.
+
+The sample is held in memory: it reads and writes no files, and every page is marked amber so it
+cannot be mistaken for your own register. Your checkbook is one box away — the page you closed
+from remembers its path — so you can go back whenever you like.
+
+If you would rather have both at once, start a second copy in another terminal:
 
 ```sh
 go run ./cmd/checkbook -demo
 ```
 
-This serves a sample household from memory at `http://127.0.0.1:8843/`. It reads and writes no
-files, it does not touch the database you just made, and it listens on its own port, so you can
-leave your own checkbook running while you look at it.
+That serves the sample at `http://127.0.0.1:8843/`, on its own port, so your own register can stay
+open beside it.
 
 ## 8. Keep the command where you can find it
 
@@ -146,6 +144,7 @@ alias checkbook='cd ~/src/mmm && go run ./cmd/checkbook -db ~/Documents/checkboo
 
 ## Next
 
+- [How to restore a backup](restore-a-backup.md) — practise it before you need it
 - [How to upgrade the application](upgrade-the-application.md) — what to do before you move to a
   newer version
 - [User manual](../references/user-manual.md) — every option, column, and message

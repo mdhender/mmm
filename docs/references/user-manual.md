@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.14.1-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.19.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -24,11 +24,16 @@ It can:
 - create an account, with a kind, a currency, and an opening balance
 - enter a transaction into an account, with an optional category
 - mark a transaction cleared, and mark it not cleared again
+- write a verified, timestamped backup beside the database
+- close the checkbook, and open another — or the same one again, or a backup, or the sample
+  household — without restarting
+- open a database read-only, so a backup can be read without being altered
+- stop the program from the browser
 
 It does not change an account once created — rename it, change its currency, close it, or remove
 it — and it does not change or delete transactions already entered, split a transaction among
-several categories, record a transfer between accounts, reconcile, import, export, create backups,
-search, or produce reports. There is no terminal interface and no command-line subcommand.
+several categories, record a transfer between accounts, reconcile, import, export, search, or
+produce reports. There is no terminal interface and no command-line subcommand.
 
 ## Starting the program
 
@@ -41,10 +46,10 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.14.1-beta
+checkbook 0.19.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
-press Ctrl+C to stop
+press Ctrl+C to stop, or use Quit in the browser
 ```
 
 ## Options
@@ -124,16 +129,33 @@ holding your records.
 
 ## The register screen
 
-The window has four regions: a title bar, the account list on the left, the register on the
-right, and a status bar along the bottom. Both bars turn amber when the database is a temporary
-one; see [A demo is marked as one](#a-demo-is-marked-as-one).
+The window has four regions: a title bar, the sidebar on the left, the register on the right, and
+a status bar along the bottom. Both bars turn amber when the database is a temporary one and slate
+when it is open read-only; see [A demo is marked as one](#a-demo-is-marked-as-one) and
+[Opening a backup read-only](#opening-a-backup-read-only).
+
+The sidebar has two sections: the accounts, and **This checkbook** — what can be done to the file
+they are in.
 
 ### Account list
 
 Every account in the database, open accounts first and alphabetically within each group. The
 account being displayed is highlighted. A closed account is marked `closed`. Below the list,
 **+ Add account** opens the form described next; the list is beside every page, so an account can
-be added from anywhere, including from a database that has none.
+be added from anywhere, including from a database that has none. It is not shown when the database
+is open read-only.
+
+### This checkbook
+
+Below the accounts, and beside every page:
+
+| Action | Effect |
+| --- | --- |
+| **Back up now** | Writes a verified copy beside the database. See [Backing up](#backing-up). Not shown for `-demo` or a read-only database. |
+| **Close checkbook** | Asks first, then closes the file. See [Closing and opening a checkbook](#closing-and-opening-a-checkbook). |
+
+**Quit** is deliberately not here. It ends the program rather than acting on the checkbook, and it
+lives on the page you land on after closing. See [Quitting](#quitting).
 
 ### Adding an account
 
@@ -300,7 +322,96 @@ page can be mistaken for the register holding your records:
 - the status bar reads `Database: :memory:checkbook-demo — held in memory, nothing is saved`
 
 The mark follows the database, not the `-demo` flag: any register whose database is held in
-memory carries it. A register on a file never does.
+memory carries it — including the sample household opened from the browser rather than with the
+flag. A register on a file never does.
+
+## Backing up
+
+**Back up now**, in the sidebar, writes a copy of the database beside it, named
+`checkbook-YYYYMMDD-HHMMSS.db` from the local clock. The register is not interrupted and the copy
+can be taken with the checkbook open.
+
+The copy is made with SQLite's `VACUUM INTO`, so it is a single compacted file with no `-wal`
+beside it — routinely smaller than the database it came from. It is written under a working name
+first, reopened read-only, checked with `PRAGMA quick_check`, and only then given a backup's name.
+**A copy that will not read back is deleted rather than left looking like a backup**, and the page
+says so.
+
+An existing backup is never written over. A second backup in the same second gets `-2` appended.
+
+Afterwards the page you were on says which file was written. Copy it somewhere else — another
+disk, or a service you already use — while you are thinking of it.
+
+| Condition | Result |
+| --- | --- |
+| `-demo`, or any database held in memory | Refused. There is no file to copy, and the action is not offered. |
+| The folder holding the database no longer exists | Refused. No folder is created. |
+| The copy will not reopen as a checkbook | Refused, the copy deleted, and the database reported as probably damaged. |
+
+To restore one, see [How to restore a backup](../how-to/restore-a-backup.md).
+
+## Closing and opening a checkbook
+
+**Close checkbook** asks first, then lets go of the file. Nothing is changed or deleted, and the
+program keeps running.
+
+Closing is what makes the file safe to copy, move, or replace: with the checkbook closed there is
+no `-wal` beside it waiting to be folded back in, so the single file is the whole checkbook.
+
+Afterwards every window on the register — including ones you left open elsewhere — gets a page
+saying no checkbook is open, with status **503**. That page offers:
+
+- the name of the file that was closed, and **Back up now** for it
+- a box to open a checkbook by path, with **Open read-only** beside it
+- **Open the sample household instead**
+- **Quit**
+
+Opening a path that does not exist creates a new, empty checkbook; a folder that does not exist is
+reported, never created. A relative path is resolved against the directory the program was started
+from. If the file will not open, the page says why in the same words the startup failure would use
+and leaves nothing open.
+
+**A close carries the checkbook it was drawn for.** If another window opened a different checkbook
+in the meantime, the close is refused with status 409 rather than applied to a database the page
+was never showing. Two windows closing the same checkbook is not a conflict: the second is told
+what it wanted to hear.
+
+## Opening a backup read-only
+
+Tick **Open read-only** to look at a backup without changing it.
+
+Opening a database normally brings its schema up to date, so opening an older backup that way
+would rewrite it — and a backup that has been rewritten is no longer the backup you took. A
+read-only database is never migrated and never written to.
+
+The program cannot tell a backup from a checkbook by looking at one, so the box is yours to tick.
+
+A read-only register is marked in the frame of every page: the title bar and status bar turn
+slate, and a padlock with **Read-only — nothing can be changed** sits at the right of the title
+bar. Every write action is withheld rather than offered and then refused — there is no entry form,
+no status mark to press, no **+ Add account**, and no **Back up now**. A write that arrives anyway,
+from a tab left open or an address typed in, is refused with status 409 and an explanation.
+
+| Condition | Result |
+| --- | --- |
+| The file does not exist | Refused. Read-only never creates one. |
+| The file is not a checkbook | Refused, unaltered. |
+| The database is from an older release | Refused, unaltered, with instructions to copy it and open the copy normally. |
+| The database is from a newer release | Refused, unaltered. |
+
+## Quitting
+
+**Quit**, on the page you land on after closing, ends the program. It asks first.
+
+The confirmation names the database that is open. Going through with it renders a page saying the
+program has stopped, along with the command that starts it again and the directory to run it from,
+and then stops: in-flight requests are allowed to finish, the checkbook is closed, and its `-wal`
+and `-shm` files are removed. The window will not answer afterwards.
+
+The goodbye page carries its own styling and links nowhere, because by the time your browser could
+ask for anything else the program is gone.
+
+Ctrl+C in the terminal does exactly the same thing by the same path.
 
 ### Status bar
 
@@ -319,8 +430,20 @@ contacts GitHub.
 | `/accounts/N` | The register for account `N`. Stable: an account's number is never reassigned. |
 | `POST /accounts/N/transactions` | Enters a transaction into account `N`. Answers with a redirect back to the register. |
 | `POST /accounts/N/transactions/M/status` | Marks transaction `M` cleared or uncleared. Answers with the row and the totals, or with a redirect when the request did not come from the page's script. |
+| `/backup` | `POST` only. Writes a verified backup and redirects back to the page it was pressed from. Works with no checkbook open, on the file just closed. |
+| `/checkbook` | The page shown when no checkbook is open. Redirects to `/` when one is. |
+| `/checkbook/close` | `GET` asks; `POST` closes. |
+| `/checkbook/open` | `POST` only. Opens a checkbook by path, read-only if asked, or the sample household. Answers with a redirect to the register. |
+| `/quit` | `GET` asks; `POST` stops the program. |
 | `/static/app.css` | The stylesheet. |
 | `/static/htmx.min.js` | The script that replaces a single row. Served from this program; nothing is fetched from the internet. |
+
+`/backup`, `/checkbook/close`, `/checkbook/open` and `/quit` act on your file or on the program
+rather than on a record, so they accept `POST` only and are refused unless the request came from a
+page this program served. There is no login, no session, and no token: the check is the two headers
+(`Sec-Fetch-Site` and `Origin`) a browser fills in by itself, so a form on another site cannot stop
+your program or close your checkbook. Requests with neither header — `curl`, a script — are
+unaffected.
 
 Any other address returns a page reporting that the address is not served. A method an address
 does not accept — anything but `GET` on a register, anything but `POST` on the entry address — is
@@ -392,11 +515,20 @@ is on screen.
 | An entry is addressed to a closed account | 409 |
 | A mark arrives without the version of the transaction it was made against | 400 |
 | A mark is refused because the transaction changed in another window | 409, or the row and a message when the page's script made the request |
+| No checkbook is open | 503, on every address |
+| A checkbook could not be opened | 422, on the page that offers to open one |
+| A close arrives for a checkbook that is no longer the one open | 409 |
+| A write arrives for a database open read-only | 409 |
+| A backup is refused because there is no file to copy | 409 |
+| A control request did not come from a page this program served | 403 |
 
 Each of these pages states what happened and what to do next, and links back to the register.
 
 ## Stopping the program
 
-Press **Ctrl+C** in the terminal, or send the process `SIGTERM`. In-flight requests are allowed to
-finish, the database is closed, and the `-wal` and `-shm` files are removed. Closing the browser
-window does not stop the program.
+Use **Quit** in the browser (see [Quitting](#quitting)), press **Ctrl+C** in the terminal, or send
+the process `SIGTERM`. All three take the same path: in-flight requests are allowed to finish, the
+database is closed, and the `-wal` and `-shm` files are removed.
+
+Closing the browser window does not stop the program. Neither does **Close checkbook**, which lets
+go of the file and leaves the program running.

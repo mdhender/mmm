@@ -24,6 +24,8 @@ Directions for a particular job. They assume you know what you are trying to do.
 
 - [How to create your first checkbook](how-to/create-your-first-checkbook.md) — choose where your
   records live, create the file, and prove you can restore a copy of it
+- [How to restore a backup](how-to/restore-a-backup.md) — read a backup before you trust it, keep
+  the file you are replacing, and put it back
 - [How to upgrade the application](how-to/upgrade-the-application.md) — move to a newer version
   without risking the records, and get back if it goes wrong
 - [How to report a problem](how-to/report-a-problem.md) — what to collect, what never

@@ -16,10 +16,14 @@ than guess, showing you a page that says so. That refusal protects the file, but
 you a working checkbook: going back to an older version means going back to your backup, which is
 why you take one first.
 
-## 1. Stop the program
+## 1. Back up, then stop the program
 
-Press **Ctrl+C** in the terminal running it. Close any browser tabs showing the register, so you
-are not tempted to trust a stale page later.
+Press **Back up now**, in the sidebar under **This checkbook**. That writes a verified copy beside
+your database, named for the moment it was taken, and you can do it without stopping anything.
+
+Then stop the program: **Close checkbook** in the sidebar, **Quit** on the page you land on, or
+Ctrl+C in the terminal running it. Close any browser tabs showing the register, so you are not
+tempted to trust a stale page later.
 
 Confirm it is really stopped: in the database folder, `checkbook.db-wal` and `checkbook.db-shm`
 should be gone, leaving `checkbook.db` on its own. A copy taken while those files exist can be
@@ -44,7 +48,10 @@ matter most if it changed.
 
 ## 3. Copy the database
 
-From the folder holding your database:
+The backup from step 1 is already a complete copy, and if you took one you can move it somewhere
+the upgrade cannot reach and skip the rest of this step.
+
+Otherwise, from the folder holding your database:
 
 ```sh
 cp checkbook.db "checkbook-before-upgrade-$(date +%Y%m%d-%H%M%S).db"
@@ -117,6 +124,7 @@ room; it costs a few hundred kilobytes and it is the only copy of that exact mom
 
 ## Related
 
+- [How to restore a backup](restore-a-backup.md) — the way back, in full
 - [How to create your first checkbook](create-your-first-checkbook.md) — where the database lives
   and why it lives there
 - [User manual](../references/user-manual.md) — options, messages, and what the program does with
