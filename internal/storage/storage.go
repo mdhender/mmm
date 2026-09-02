@@ -11,9 +11,11 @@ package storage
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,26 +164,61 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // backup that was taken. That is not a hypothetical -- it is the bug this
 // function was written for.
 //
-// Anything that is not a readable SQLite database falls through untouched. A
-// path that does not exist yet is a new checkbook, and a file that is not a
-// database gets the error open reports for it; a guess here could only make
-// those answers worse.
+// A path that does not exist yet is a new checkbook and falls through untouched,
+// as does an empty file, which SQLite will initialize. A file that has bytes and
+// is not a SQLite database at all is refused here, which is a second job this
+// guard has grown: see the comment on that branch for why leaving it to
+// sqlitemigration means hanging rather than failing.
 func refuseBackup(path string) error {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Size() == 0 {
+		// Nothing there is a new checkbook, and an empty file is one SQLite will
+		// initialize. Neither is a question this can answer.
+		return nil
+	}
+
 	appID, err := ApplicationID(path)
+	if errors.Is(err, ErrNotCheckbook) {
+		// The file has bytes and does not begin with SQLite's header, so it is
+		// not a database at all.
+		//
+		// This is refused here rather than left to sqlitemigration, and it has to
+		// be. sqlitemigration.Pool.Take retries a pool it could not open every
+		// five seconds, for as long as its context lasts, and sqlitex.NewPool
+		// failing is one of the cases it retries rather than reports -- so Open
+		// on a file that is not a database does not fail, it hangs, until the
+		// program is stopped. A household whose checkbook has been truncated or
+		// overwritten would get a listener that accepts and never answers, which
+		// is the worst possible response to the one emergency this program has.
+		//
+		// Returned as it came: ApplicationID has already named the file.
+		return err
+	}
 	if err != nil || appID != BackupAppID {
 		return nil
 	}
+
+	// BK-6.
 	return fmt.Errorf("%s: %w", path, ErrIsBackup)
 }
 
 // ApplicationID reads the application_id out of the header of the SQLite
 // database at path.
 //
-// It opens read-only and without OpenCreate, so a missing file is reported
-// rather than made, and it never migrates: this is how a file is asked what it
-// is before anything is done to it. Callers that cannot tell the difference
-// between "not one of ours" and "could not be read" should treat any error as
-// the former and let the ordinary open path produce the message.
+// The header is read as bytes rather than by opening the database, and that is
+// not an optimization. This is how a file is asked what it is before anything is
+// done to it, and opening it is already doing something: a database in WAL mode
+// opened even read-only wants a -shm beside it, so asking the question would
+// leave a file in the household's folder, and would fail outright in a folder
+// that cannot be written to. Reading 72 bytes asks without touching anything,
+// works on a file another process has open, and cannot migrate, convert, or
+// create.
+//
+// The format is fixed by SQLite and documented as such: every database begins
+// with the sixteen bytes "SQLite format 3\x00", and the application_id is a
+// four-byte big-endian integer at offset 68. Callers that cannot tell the
+// difference between "not one of ours" and "could not be read" should treat any
+// error as the former and let the ordinary open path produce the message.
 func ApplicationID(path string) (int32, error) {
 	if path == "" {
 		return 0, ErrMissingPath
@@ -191,25 +228,37 @@ func ApplicationID(path string) (int32, error) {
 		return 0, fmt.Errorf("%s: %w", path, ErrMissingFile)
 	}
 	// An empty file is a database SQLite would happily create a schema in. It
-	// has no header to read and is nobody's backup.
-	if info.Size() == 0 {
+	// has no header to read and is nobody's backup. Anything shorter than the
+	// header cannot answer the question either.
+	if info.Size() < sqliteHeaderSize {
 		return 0, fmt.Errorf("%s: %w", path, ErrNotCheckbook)
 	}
 
-	// OpenURI is deliberately absent: path is a filesystem path, and a "?" in a
-	// folder name must stay part of the name rather than becoming a parameter.
-	conn, err := sqlite.OpenConn(path, sqlite.OpenReadOnly)
+	f, err := os.Open(path)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", path, err)
 	}
-	defer conn.Close()
+	defer func() { _ = f.Close() }()
 
-	appID, err := pragmaInt(conn, `PRAGMA application_id;`)
-	if err != nil {
+	var header [sqliteHeaderSize]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil {
 		return 0, fmt.Errorf("%s: %w", path, err)
 	}
-	return int32(appID), nil
+	if string(header[:len(sqliteMagic)]) != sqliteMagic {
+		return 0, fmt.Errorf("%s: %w", path, ErrNotCheckbook)
+	}
+	return int32(binary.BigEndian.Uint32(header[applicationIDOffset:])), nil
 }
+
+// The part of the SQLite file format ApplicationID depends on. It is fixed by
+// the format itself -- a header is 100 bytes, begins with a magic string, and
+// carries application_id at offset 68 as a four-byte big-endian integer -- and
+// SQLite treats those offsets as a compatibility promise.
+const (
+	sqliteMagic         = "SQLite format 3\x00"
+	applicationIDOffset = 68
+	sqliteHeaderSize    = applicationIDOffset + 4
+)
 
 // OpenMemory opens an in-memory database. It touches no files and vanishes when
 // the Store is closed, which is what tests want.

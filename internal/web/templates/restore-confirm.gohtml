@@ -1,0 +1,46 @@
+{{define "main"}}
+    {{- /* RG-3. Restoring destroys nothing -- the checkbook that is here is kept
+           and named -- but it does replace every record in front of the
+           household, in every tab they have open, with the ones from another
+           day. The page says exactly what will happen and offers a way out. */ -}}
+    <div class="register-head">
+        <h1>Restore the backup taken {{.Chosen.Taken}}?</h1>
+    </div>
+
+    <dl class="problem-facts">
+        <dt>Restore from</dt>
+        <dd><code>{{.Chosen.Name}}</code></dd>
+    </dl>
+    <dl class="problem-facts">
+        <dt>Replaces</dt>
+        <dd><code>{{.Checkbook}}</code></dd>
+    </dl>
+
+    <p>
+        This replaces the records in <code>{{.Checkbook}}</code> with the ones in
+        <code>{{.Chosen.Name}}</code>. Anything entered since that backup was taken is not in it,
+        and there is no way to merge the two.
+    </p>
+    <p>
+        The checkbook you have now is kept, under a <code>checkbook-replaced-</code> name in the
+        same folder, and the page you land on will say which. Nothing is deleted, and the backup
+        itself is not altered.
+    </p>
+    <p class="muted">
+        Any other window you have open on this checkbook will show the restored records the next
+        time you use it.
+    </p>
+
+    <form method="post" action="/checkbook/restore">
+        {{- /* The generation of the checkbook this page was drawn for, so a tab
+               that has been on screen since before a swap is refused rather than
+               applied to a database it was never looking at (CO-3). */ -}}
+        <input type="hidden" name="generation" value="{{.Generation}}">
+        <input type="hidden" name="path" value="{{.Chosen.Path}}">
+        <input type="hidden" name="return" value="{{.ReturnTo}}">
+        <div class="entry-fields">
+            <div class="f-add"><button type="submit">Restore it</button></div>
+            <div class="f-add"><a class="cta" href="/checkbook/restore">Keep what I have</a></div>
+        </div>
+    </form>
+{{end}}

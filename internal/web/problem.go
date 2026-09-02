@@ -3,12 +3,7 @@
 package web
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
-	"html/template"
-	"io/fs"
-	"net/http"
 
 	"github.com/mdhender/mmm/internal/storage"
 )
@@ -38,6 +33,13 @@ var (
 )
 
 // Problem describes why the register cannot be served.
+//
+// It was once rendered at every address by a mux of its own, and that is exactly
+// what this program must not do: the household whose checkbook will not open is
+// the household that most needs the restore list, and a page that answers every
+// address has no address left to put one at. So a startup failure now builds the
+// ordinary Server with no store and hands it this, and the no-checkbook page
+// carries it -- which is the rule the rest of the package already followed.
 type Problem struct {
 	// Heading says what happened, in the reader's terms.
 	Heading string
@@ -151,49 +153,4 @@ func DescribeOpenError(err error, database string) Problem {
 	}
 
 	return p
-}
-
-// NewProblem builds a handler that serves one page, at every address, saying
-// that the database could not be opened.
-//
-// The program keeps running and shows this rather than exiting, because on a
-// desktop the terminal may not be visible at all -- the register is opened by
-// double-clicking the program, and a message printed to a window nobody sees is
-// not a message. The failure is also printed to the terminal for whoever can see
-// one.
-//
-// Every response is 503: nothing here is the reader's request being wrong.
-func NewProblem(p Problem, version string) (http.Handler, error) {
-	if len(p.Steps) == 0 {
-		// An error page without a next step is a dead end (RG-4).
-		return nil, fmt.Errorf("web: problem page has no steps")
-	}
-	p.Version = version
-
-	t, err := template.New(problemFile).ParseFS(templateFS, "templates/"+problemFile)
-	if err != nil {
-		return nil, fmt.Errorf("web: parse %s: %w", problemFile, err)
-	}
-
-	var page bytes.Buffer
-	if err := t.ExecuteTemplate(&page, problemFile, p); err != nil {
-		return nil, fmt.Errorf("web: render %s: %w", problemFile, err)
-	}
-	body := page.Bytes()
-
-	static, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		return nil, fmt.Errorf("web: static assets: %w", err)
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
-	// No method and no path: every request, however it arrives, gets the same
-	// answer. There is nothing else this program can do until the database opens.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write(body)
-	})
-	return mux, nil
 }

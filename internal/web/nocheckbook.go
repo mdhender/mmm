@@ -54,11 +54,16 @@ type noCheckbookPage struct {
 	Path     string
 	ReadOnly bool
 
-	// RestoreSource and RestoreDest are the same thing for the restore form,
-	// and RestoreMessage is what happened to it. Restoring is offered here and
-	// nowhere else: it needs a name to write to, which is a box rather than a
-	// button, and this is the page a reader is on when they have closed a backup
-	// and decided it is the one.
+	// Restore is the list of backups this program can find, and the press that
+	// puts one in place. It is the primary offer on this page, because a
+	// household with no checkbook open is either between two files or looking at
+	// one that would not open, and both end at the same list.
+	Restore *restoreOffer
+
+	// RestoreSource and RestoreDest are what was last typed into the
+	// restore-to-a-copy form, and RestoreMessage is what happened to it. That
+	// form stays below the list: it replaces nothing and needs no Opener, so it
+	// is the answer when the file you want back is not the one you work in.
 	RestoreSource  string
 	RestoreDest    string
 	RestoreMessage string
@@ -98,6 +103,14 @@ func (s *Server) renderRestoreFailed(w http.ResponseWriter, r *http.Request, sta
 func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, status int, message string, problem *Problem, req OpenRequest, restore RestoreRequest, restoreMessage string) {
 	closed, inMemory, closedIsBackup := s.closedCheckbook()
 
+	if problem == nil {
+		// The checkbook named at startup would not open, and until something
+		// does, that is still what is wrong. It is shown here rather than by a
+		// handler of its own because this page is the one with the list of
+		// backups on it, and that list is what the reader needs.
+		problem = s.startupFailure()
+	}
+
 	page := noCheckbookPage{
 		Version:        s.version,
 		Closed:         closed,
@@ -107,9 +120,10 @@ func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, s
 		CanQuit:        s.quit != nil,
 		Problem:        problem,
 		Message:        message,
-		Notice:         noticeFor(r),
+		Notice:         s.noticeFor(r),
 		Path:           req.Path,
 		ReadOnly:       req.ReadOnly,
+		Restore:        s.restoreOffer(r),
 		RestoreSource:  restore.Source,
 		RestoreDest:    restore.Dest,
 		RestoreMessage: restoreMessage,

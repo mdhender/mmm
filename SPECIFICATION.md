@@ -56,6 +56,10 @@ requirements; where they conflict with this document, this document wins.
 - **ST-9** Primary keys MUST NOT be reused. Deleting a record MUST NOT free its identifier for a
   later one, or anything still holding that identifier — an open tab, a bookmark, an export, a
   reconciliation — would silently come to mean a different record.
+- **ST-10** The application MUST NOT create a directory as a side effect of any operation. It MAY
+  create a directory whose name the program itself chose, inside a directory that already holds
+  the household's records, in answer to an explicit action, and MUST say that it did so. ST-6
+  remains about opening a database, where no directory is ever created.
 
 ## RG — Register and core operations
 
@@ -94,6 +98,9 @@ requirements; where they conflict with this document, this document wins.
   user's decision.
 - **IE-8** The application MUST export documented open formats, at least CSV and Ledger-style
   text. Exports are part of the product, not an escape hatch added later.
+- **IE-9** Recovering individual records from a backup is an import, not a restore, and is subject
+  to IE-5, IE-6 and IE-7. Restore acts on a whole file; import acts on records. Nothing that
+  merges records from one of this program's own files into another may be offered as a restore.
 
 ## BK — Backups
 
@@ -107,6 +114,10 @@ requirements; where they conflict with this document, this document wins.
 - **BK-6** A backup MUST NOT be openable for writing. It MUST be readable in place, and its
   records MUST be reachable by restoring it to a new file, which MUST NOT overwrite an existing
   one. The distinction MUST be carried by the file itself rather than by its name or location.
+- **BK-7** Restore acts on a whole checkbook file. It MUST NOT merge records, MUST NOT alter the
+  file it restores from, and MUST keep any file it displaces — under a name the application tells
+  the user. Restoring MUST be reachable when no checkbook is open, including when the checkbook
+  the application was started on could not be opened at all: that is the case it exists for.
 
 ## CO — Correctness
 

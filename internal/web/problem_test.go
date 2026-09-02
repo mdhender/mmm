@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,54 +125,45 @@ func TestDescribeOpenErrorCoversEveryFailure(t *testing.T) {
 	}
 }
 
-// problemHandler builds the page served when the database will not open.
-func problemHandler(t *testing.T, err error) http.Handler {
+// startupFailure builds the server the program serves when -db would not open:
+// the ordinary one, with no store and the failure handed over as a Problem.
+func startupFailure(t *testing.T, err error) http.Handler {
 	t.Helper()
-	h, buildErr := web.NewProblem(web.DescribeOpenError(err, "/tmp/checkbook.db"), "0.0.0-test")
-	if buildErr != nil {
-		t.Fatalf("NewProblem: %v", buildErr)
-	}
-	return h
+
+	p := web.DescribeOpenError(err, "/tmp/checkbook.db")
+	return newServer(t, web.Options{
+		Problem:       &p,
+		CheckbookPath: "/tmp/checkbook.db",
+		Open:          memoryOpener(t),
+	})
 }
 
-// TestProblemAnswersEveryAddress is the "single route": whatever the reader asks
-// for, including a bookmarked register, they get the same explanation rather
-// than a 404 that sends them looking for the wrong problem.
-func TestProblemAnswersEveryAddress(t *testing.T) {
-	h := problemHandler(t, fmt.Errorf("%w: schema 47", storage.ErrDatabaseTooNew))
+// TestStartupFailureAnswersEveryAddress. Whatever the reader asks for, including
+// a bookmarked register, they get the explanation rather than a 404 that would
+// send them looking for the wrong problem. Unlike the page this replaced, the
+// addresses that can do something about it still answer.
+func TestStartupFailureAnswersEveryAddress(t *testing.T) {
+	h := startupFailure(t, fmt.Errorf("%w: schema 47", storage.ErrDatabaseTooNew))
 
-	for _, tt := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/"},
-		{http.MethodGet, "/accounts/1"},
-		{http.MethodGet, "/accounts/nope"},
-		{http.MethodGet, "/anything/at/all"},
-		{http.MethodPost, "/accounts/1"},
-	} {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(tt.method, tt.path, nil))
-
+	for _, path := range []string{"/", "/accounts/1", "/accounts/nope", "/anything/at/all"} {
+		w := get(t, h, path)
 		if w.Code != http.StatusServiceUnavailable {
-			t.Errorf("%s %s: status = %d, want 503", tt.method, tt.path, w.Code)
+			t.Errorf("GET %s: status = %d, want 503", path, w.Code)
 		}
 		if !strings.Contains(w.Body.String(), "newer version of the program") {
-			t.Errorf("%s %s: did not serve the problem page", tt.method, tt.path)
+			t.Errorf("GET %s: did not explain why there is no register", path)
 		}
 	}
 }
 
-func TestProblemPageContents(t *testing.T) {
-	h := problemHandler(t, fmt.Errorf("%w: database is at schema 47", storage.ErrDatabaseTooNew))
-
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
-	body := w.Body.String()
+// TestStartupFailurePageContents. The page says which file, what happened, what
+// to do next, and which build produced it -- everything a report needs (RG-4).
+func TestStartupFailurePageContents(t *testing.T) {
+	h := startupFailure(t, fmt.Errorf("%w: database is at schema 47", storage.ErrDatabaseTooNew))
+	body := get(t, h, "/checkbook").Body.String()
 
 	for _, want := range []string{
 		"/tmp/checkbook.db",                      // which file
-		"Nothing has been changed",               // whether it is safe
 		"What to do next",                        // RG-4
 		"restore the backup",                     // a step
 		"docs/how-to/upgrade-the-application.md", // where to read more
@@ -180,7 +171,7 @@ func TestProblemPageContents(t *testing.T) {
 		"0.0.0-test",                             // which build
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("problem page does not contain %q", want)
+			t.Errorf("the page does not contain %q", want)
 		}
 	}
 
@@ -188,18 +179,33 @@ func TestProblemPageContents(t *testing.T) {
 	// build an account list from, and an empty sidebar reading "None yet." would
 	// suggest an empty checkbook rather than one that could not be opened.
 	if strings.Contains(body, "None yet.") || strings.Contains(body, `aria-label="Accounts"`) {
-		t.Error("problem page rendered the account list")
+		t.Error("the page rendered the account list")
 	}
 }
 
-// TestProblemServesStylesheet: the page has to be legible, so the one asset it
-// references is not caught by the catch-all.
-func TestProblemServesStylesheet(t *testing.T) {
-	h := problemHandler(t, errors.New("disk I/O error"))
+// TestStartupFailureStopsBeingWhatIsWrong. Once something has opened, the reason
+// -db would not is history, and a page that kept saying it would be describing a
+// state the reader has left behind.
+func TestStartupFailureStopsBeingWhatIsWrong(t *testing.T) {
+	h := startupFailure(t, fmt.Errorf("%w: schema 47", storage.ErrDatabaseTooNew))
 
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/static/app.css", nil))
-	if w.Code != http.StatusOK {
+	if w := postFromPage(t, h, "/checkbook/open", url.Values{"path": {"elsewhere.db"}}); w.Code != http.StatusSeeOther {
+		t.Fatalf("open = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if w := postFromPage(t, h, "/checkbook/close", url.Values{"generation": {generationOf(t, h)}}); w.Code != http.StatusOK {
+		t.Fatalf("close = %d, want 200", w.Code)
+	}
+	if body := get(t, h, "/checkbook").Body.String(); strings.Contains(body, "newer version of the program") {
+		t.Error("the page still reports the startup failure after a checkbook was opened")
+	}
+}
+
+// TestStylesheetIsServedWithNothingOpen: the page has to be legible, so the one
+// asset it references is not caught by the catch-all.
+func TestStylesheetIsServedWithNothingOpen(t *testing.T) {
+	h := startupFailure(t, errors.New("disk I/O error"))
+
+	if w := get(t, h, "/static/app.css"); w.Code != http.StatusOK {
 		t.Fatalf("stylesheet status = %d, want 200", w.Code)
 	}
 }
@@ -230,13 +236,5 @@ func TestProblemDocsExist(t *testing.T) {
 	}
 	if len(seen) == 0 {
 		t.Fatal("no documents are offered by any problem page")
-	}
-}
-
-// TestProblemRequiresSteps guards RG-4 at the point where a page is built.
-func TestProblemRequiresSteps(t *testing.T) {
-	_, err := web.NewProblem(web.Problem{Heading: "Something went wrong"}, "0.0.0-test")
-	if err == nil {
-		t.Fatal("NewProblem accepted a page with no next step")
 	}
 }

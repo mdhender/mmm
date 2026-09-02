@@ -3,9 +3,12 @@
 package storage_test
 
 import (
+	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -193,4 +196,48 @@ func TestOpenStillCreatesANewCheckbook(t *testing.T) {
 	if store.IsBackup() {
 		t.Error("a new checkbook reports itself as a backup")
 	}
+}
+
+// TestOpenRefusesAFileThatIsNotADatabaseAtOnce, and "at once" is the assertion.
+//
+// sqlitemigration.Pool.Take retries a pool it could not open every five seconds
+// for as long as its context lasts, and sqlitex.NewPool failing is one of the
+// cases it retries rather than reports. Left to it, Open on a checkbook that has
+// been truncated or overwritten does not fail -- it hangs, until the program is
+// stopped, which for the browser means a listener that accepts and never
+// answers. That is the worst possible response to the one emergency this program
+// has, so the file is asked what it is before sqlitemigration ever sees it.
+func TestOpenRefusesAFileThatIsNotADatabaseAtOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checkbook.db")
+	if err := os.WriteFile(path, []byte("this is not a database"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// A deadline far shorter than the five seconds a retry would take, so a
+	// regression fails the test rather than slowing it down.
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	if _, err := storage.Open(ctx, path); !errors.Is(err, storage.ErrNotCheckbook) {
+		t.Errorf("Open on a file that is not a database: %v, want ErrNotCheckbook", err)
+	}
+	if ctx.Err() != nil {
+		t.Error("Open waited for its context rather than reporting at once")
+	}
+}
+
+// TestOpenStillCreatesACheckbookInAnEmptyFile. The guard above must not catch
+// this: an empty file is one SQLite will initialize, and "touch checkbook.db and
+// start the program" is a reasonable way to begin.
+func TestOpenStillCreatesACheckbookInAnEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "checkbook.db")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	store, err := storage.Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("Open on an empty file: %v", err)
+	}
+	_ = store.Close()
 }

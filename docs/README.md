@@ -14,9 +14,10 @@ apart so that none of them has to be three things at once.
 [How to create your first checkbook](how-to/create-your-first-checkbook.md).
 
 **A caution before you plan around it:** this release keeps a register — it creates accounts, takes
-transactions, and marks them cleared. It cannot yet change or delete anything already entered, and
-it cannot split, transfer, import, export, reconcile, or back up for you. Every document below
-says so where it matters, but it is easier to hear once, up front.
+transactions, marks them cleared, backs itself up, and restores from a backup in one press. It
+cannot yet change or delete anything already entered, and it cannot split, transfer, import,
+export, or reconcile. Every document below says so where it matters, but it is easier to hear once,
+up front.
 
 ## How-to guides
 
@@ -24,8 +25,8 @@ Directions for a particular job. They assume you know what you are trying to do.
 
 - [How to create your first checkbook](how-to/create-your-first-checkbook.md) — choose where your
   records live, create the file, and prove you can restore a copy of it
-- [How to restore a backup](how-to/restore-a-backup.md) — read a backup before you trust it, keep
-  the file you are replacing, and put it back
+- [How to restore a backup](how-to/restore-a-backup.md) — read a backup before you trust it,
+  replace your checkbook with it in one press, and keep the file it displaced
 - [How to upgrade the application](how-to/upgrade-the-application.md) — move to a newer version
   without risking the records, and get back if it goes wrong
 - [How to report a problem](how-to/report-a-problem.md) — what to collect, what never
@@ -38,6 +39,8 @@ Description of the machinery, for consulting rather than reading.
 - [User manual](references/user-manual.md) — options, the database file, every register column and
   total, the addresses served, and the exact messages a failed startup prints. States the version
   it applies to.
+- [Glossary](references/glossary.md) — the words the interface uses, with the ones for things that
+  are not built yet marked as such
 
 ## Explanation
 
@@ -46,6 +49,8 @@ Background and discussion, for when you are away from the program and thinking a
 - [About mmm](explanations/what-is-mmm.md) — why a checkbook rather than a financial platform, why
   files rather than a service, why it does not connect to your bank and what that costs you, and
   who would be better served by something else
+- [Restore and import](explanations/restore-and-import.md) — two words for getting your records
+  back, which one you want, and why there is no merge
 
 ## Tutorials
 
@@ -67,7 +72,7 @@ the specification wins:
 - [architecture.md](architecture.md), [project-structure.md](project-structure.md)
 - [sqlite-store.md](sqlite-store.md), [data-imports.md](data-imports.md),
   [reconciliation.md](reconciliation.md)
-- [restore-from-backup.md](restore-from-backup.md) — the one-press restore, not built yet
+- [restore-from-backup.md](restore-from-backup.md) — the one-press restore, built in 0.21.0-beta
 - [local-web-ui.md](local-web-ui.md), [htmx-web-ui.md](htmx-web-ui.md),
   [local-text-ui.md](local-text-ui.md)
 - [inspiration.md](inspiration.md)

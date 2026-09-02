@@ -1,0 +1,51 @@
+{{define "main"}}
+    <div class="register-head">
+        <h1>Restore a backup</h1>
+        <p class="muted">
+            Restoring acts on a whole file: you get the records that were in the backup, and the
+            ones entered since are not in it. It never merges two files, and it never alters the
+            backup it reads (SPECIFICATION.md BK-4, BK-7).
+        </p>
+    </div>
+
+    {{if .Message}}<p class="entry-error" role="alert">{{.Message}}</p>{{end}}
+
+    {{if .Restore.Checkbook}}
+        <dl class="problem-facts">
+            <dt>Would replace</dt>
+            <dd><code>{{.Restore.Checkbook}}</code></dd>
+        </dl>
+    {{end}}
+
+    {{template "restore-list" .Restore}}
+
+    {{- /* The older restore, kept beside the new one. It needs no Opener and
+           replaces nothing, so it is the answer when the file you want back is
+           not the one you are working in -- and the only answer in a build that
+           cannot open a checkbook by itself. */ -}}
+    <h2 class="restore-copy-heading">Or restore to a file of its own</h2>
+    <p class="muted">
+        This copies a backup to a name you choose and leaves everything else alone. Nothing is
+        replaced and nothing is opened; you open the copy yourself once you have looked at it.
+    </p>
+    <form class="entry account-form" method="post" action="/checkbook/restore/copy">
+        <input type="hidden" name="return" value="{{.Restore.ReturnTo}}">
+        <div class="entry-fields">
+            <label class="f-path">Restore from
+                <input type="text" name="source" value=""
+                       autocomplete="off" spellcheck="false" placeholder="checkbook-20260902-141530.db">
+            </label>
+            <label class="f-path">Restore to
+                <input type="text" name="dest" value=""
+                       autocomplete="off" spellcheck="false" placeholder="checkbook-restored.db">
+            </label>
+            <div class="f-add">
+                <button type="submit">Restore to a copy</button>
+            </div>
+        </div>
+        <p class="muted entry-note">
+            The file you restore to must not exist yet. Nothing is ever written over: the file you
+            would be replacing is often the one that shows what went wrong.
+        </p>
+    </form>
+{{end}}

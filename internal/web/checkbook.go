@@ -101,7 +101,57 @@ func (s *Server) adopt(store *storage.Store) (*checkbook, *checkbook) {
 	}
 	previous := s.current
 	s.current = cb
+
+	if !cb.readOnly && !cb.inMemory {
+		// The checkbook a restore would put a file back at. A backup opened
+		// read-only is deliberately not it: restoring over the copy somebody is
+		// reading is the mistake BK-6 exists to stop.
+		s.writablePath = cb.path
+	}
+	// Whatever would not open at startup is no longer what is wrong.
+	s.startupProblem = nil
 	return cb, previous
+}
+
+// checkbookPath is the file this program calls "the checkbook".
+//
+// It is the one that is open when that one could be written to, and otherwise
+// the last one that could, falling back to what -db named -- which is the answer
+// in the case this whole feature exists for, where -db never opened at all.
+// A backup being read and the sample household are neither, so neither can be
+// the file a restore replaces.
+func (s *Server) checkbookPath() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if cb := s.current; cb != nil && !cb.readOnly && !cb.inMemory {
+		return cb.path
+	}
+	return s.writablePath
+}
+
+// generationMatches reports whether gen names the checkbook that is open now.
+//
+// Zero means "nothing is open", which is a state a restore is started from as
+// readily as any other, so it is a value to match rather than a wildcard. That
+// is the difference between this and retire's gen argument, where zero means
+// "whatever is there" because Close on shutdown has nothing to compare.
+func (s *Server) generationMatches(gen uint64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.current == nil {
+		return gen == 0
+	}
+	return s.current.gen == gen
+}
+
+// startupFailure reports why the checkbook named at startup would not open, or
+// nil once something has opened.
+func (s *Server) startupFailure() *Problem {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.startupProblem
 }
 
 // retire removes the current checkbook and returns it.

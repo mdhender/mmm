@@ -329,23 +329,8 @@ func setApplicationID(ctx context.Context, path string, id int32) error {
 }
 
 // freeName picks the name the backup will carry.
-//
-// Two backups inside one second are unlikely and not impossible, so the name is
-// checked and a counter added rather than an earlier backup being written over.
-// Losing a backup to a backup would be the worst possible way to lose one.
 func freeName(dir string, now time.Time) (string, error) {
-	stamp := now.Format(nameLayout)
-	for n := 1; n <= 100; n++ {
-		name := "checkbook-" + stamp + ".db"
-		if n > 1 {
-			name = "checkbook-" + stamp + "-" + strconv.Itoa(n) + ".db"
-		}
-		path := filepath.Join(dir, name)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("%s: %w", filepath.Join(dir, "checkbook-"+stamp+".db"), ErrNameInUse)
+	return freeStamped(dir, backupPrefix, now)
 }
 
 // tempName is where a copy is written before it has earned its name. kind says

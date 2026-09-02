@@ -4,7 +4,9 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -22,19 +24,44 @@ import (
 // checked against the shape backup.Create produces before it is used at all.
 const backedUpParam = "backedup"
 
+// newFolderParam says the backups folder was created to hold the copy. ST-10
+// lets the program make a folder it named itself, in a folder that already holds
+// the household's records, in answer to an explicit action -- and requires it to
+// say that it did so. This is how it says.
+const newFolderParam = "newfolder"
+
 // noticeFor reads the notice a redirect is carrying, if any.
 //
 // It is called from pageLayout, so any page can carry one and no page has to
 // remember to.
-func noticeFor(r *http.Request) string {
+func (s *Server) noticeFor(r *http.Request) string {
 	q := r.URL.Query()
 
 	if name := q.Get(backedUpParam); name != "" {
-		if !validBackupName(name) {
+		if !backup.ValidBackupName(name) {
 			return ""
 		}
-		return "A backup was written beside your checkbook, as " + name +
-			". It was reopened and read back as a checkbook before being named, so it is a copy you can restore from. Copy it somewhere else — another disk, or a service you already use — while you are thinking of it."
+		notice := "A backup was written to the backups folder beside your checkbook, as " + backup.FolderName + "/" + name + "."
+		if q.Get(newFolderParam) != "" {
+			notice += " The " + backup.FolderName + " folder did not exist, so it was made for it."
+		}
+		return notice +
+			" It was reopened and read back as a checkbook before being named, so it is a copy you can restore from. Copy it somewhere else — another disk, or a service you already use — while you are thinking of it."
+	}
+
+	if name := q.Get(keptParam); name != "" {
+		// The one-press restore. Both files are named, because the reader's way
+		// back is the one that was kept, and a page that only said "restored"
+		// would leave them wondering what happened to what they had.
+		if !backup.ValidReplacedName(name) {
+			return ""
+		}
+		notice := "Your checkbook was restored"
+		if from := q.Get(swappedParam); s.restorableBeside(from) {
+			notice += " from " + from
+		}
+		return notice + ". The checkbook you had is kept as " + name +
+			", in the same folder, and nothing was deleted — open it if you want to be back where you were. Back up now, so the trail continues from here."
 	}
 
 	if path := q.Get(restoredParam); path != "" {
@@ -62,43 +89,24 @@ func restoredCheckbookExists(path string) bool {
 	return err == nil && appID == storage.AppID
 }
 
-// validBackupName reports whether name is one this program wrote: the exact
-// shape backup.Create gives a copy, and nothing else.
+// restorableBeside reports whether name really is a file beside the checkbook
+// that this program could have restored from, right now.
 //
-// The name arrives in a URL, which anything can compose, and it is put into a
-// sentence the reader is meant to believe. Templates would escape it either way;
-// this is about not saying something untrue.
-func validBackupName(name string) bool {
-	rest, ok := strings.CutPrefix(name, "checkbook-")
-	if !ok {
+// The value arrives in a URL, which anything can compose, and it goes into a
+// sentence the reader is meant to believe. A backup's own name can be checked by
+// its shape, but this one is whatever the household called the file they chose,
+// so the file is asked instead -- the same trick restoredCheckbookExists uses,
+// and for the same reason.
+func (s *Server) restorableBeside(name string) bool {
+	if name == "" || filepath.IsAbs(name) || strings.Contains(name, "..") {
 		return false
 	}
-	rest, ok = strings.CutSuffix(rest, ".db")
-	if !ok {
+	checkbook := s.checkbookPath()
+	if checkbook == "" {
 		return false
 	}
-	// 20260902-141530, and 20260902-141530-2 for the second backup to land in
-	// the same second.
-	parts := strings.Split(rest, "-")
-	if len(parts) != 2 && len(parts) != 3 {
-		return false
-	}
-	if len(parts[0]) != 8 || !allDigits(parts[0]) {
-		return false
-	}
-	if len(parts[1]) != 6 || !allDigits(parts[1]) {
-		return false
-	}
-	return len(parts) == 2 || allDigits(parts[2])
-}
-
-func allDigits(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return len(s) > 0
+	appID, err := storage.ApplicationID(filepath.Join(filepath.Dir(checkbook), filepath.FromSlash(name)))
+	return err == nil && (appID == storage.AppID || appID == storage.BackupAppID)
 }
 
 // handleBackup writes a verified copy of the database beside it (BK-2, BK-5).
@@ -142,16 +150,60 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := backup.Create(r.Context(), path, filepath.Dir(path))
+	// Into the backups folder beside the checkbook, which is made if it is not
+	// there. That is the one directory this program creates, and ST-10 is what
+	// licenses it: a name the program chose, inside a folder that already holds
+	// the household's records, in answer to a press -- and said out loud on the
+	// page that follows. backup.Create learns none of this; the convention lives
+	// in backup.Folder, so the terminal register gets it by calling the same
+	// function rather than by remembering a string.
+	dir := backup.Folder(path)
+	newFolder, err := ensureFolder(dir)
+	if err != nil {
+		s.log.Error("make the backups folder", "dir", dir, "err", err)
+		s.backupRefused(w, r, cb, http.StatusInternalServerError,
+			"The backups folder could not be made",
+			"Backups go in "+dir+", and that folder is not there and could not be created. No backup was written.",
+			"Check that the disk is not full and that "+filepath.Dir(path)+" can be written to, then press Back up now again.")
+		return
+	}
+
+	res, err := backup.Create(r.Context(), path, dir)
 	if err != nil {
 		s.backupFailed(w, r, cb, path, err)
 		return
 	}
-	s.log.Info("backup written", "path", res.Path, "bytes", res.Bytes)
+	s.log.Info("backup written", "path", res.Path, "bytes", res.Bytes, "new folder", newFolder)
 
 	// See Other, so the reload that follows is a GET and does not take a second
 	// backup. The reader lands back on the page they pressed the link from.
-	http.Redirect(w, r, back+"?"+backedUpParam+"="+filepath.Base(res.Path), http.StatusSeeOther)
+	target := back + "?" + backedUpParam + "=" + filepath.Base(res.Path)
+	if newFolder {
+		target += "&" + newFolderParam + "=1"
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// ensureFolder makes dir if it is not there, and reports whether it had to.
+//
+// Only the one level: MkdirAll would build a whole path, and the only folder
+// this program may create is the one it named itself inside a folder that is
+// already there (ST-10). A missing parent is a checkbook whose folder has gone,
+// which is a different failure and gets a different message.
+func ensureFolder(dir string) (created bool, err error) {
+	info, err := os.Stat(dir)
+	switch {
+	case err == nil && info.IsDir():
+		return false, nil
+	case err == nil:
+		return false, fmt.Errorf("%s is not a folder", dir)
+	case !errors.Is(err, os.ErrNotExist):
+		return false, err
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // backupRefused answers a backup that did not happen, on whichever page the

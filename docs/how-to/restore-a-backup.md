@@ -1,133 +1,152 @@
 # How to restore a backup
 
 This guide shows you how to go back to a backup: how to look at one first to be sure it is the
-right one, how to put it in place, and how to keep the file you are replacing in case you were
-wrong.
+right one, how to put it in place in one press, and where the file you replaced goes.
 
 It takes a few minutes and needs no terminal. Do it once now, while nothing is at stake — an
 untested backup is a guess.
 
 ## Before you start
 
-You need a backup to restore. **Back up now**, in the sidebar under **This checkbook**, writes
-one beside your database and names it for the moment it was taken:
+You need a backup to restore. **Back up now**, in the sidebar under **This checkbook**, writes one
+into a `backups` folder beside your database and names it for the moment it was taken:
 
 ```
 ~/Documents/checkbook/
-    checkbook.db
-    checkbook-20260902-141530.db      <- a backup
-    checkbook-20260830-091204.db      <- an older one
+    checkbook.db                            your checkbook
+    backups/
+        checkbook-20260902-141530.db        a backup
+        checkbook-20260830-091204.db        an older one
 ```
 
-If the folder holds no such file, take a backup first and come back once you have one to practise
-on.
+If the folder is not there, press **Back up now** once and it will be made for you; the page says
+so when it does. Backups written by older releases sit beside `checkbook.db` rather than inside
+`backups/`. They are not moved, and they are still found and still offered.
 
-## 1. Look at the backup before you use it
+## 1. Open the list
 
-You do not have to guess which backup is the right one, and you do not have to risk finding out
-the hard way. Open it **read-only** and read it.
+In the sidebar, under **This checkbook**, press **Restore a backup**.
 
-1. In the sidebar, press **Close checkbook** and confirm.
-2. On the page you land on, type the backup's full path into the box —
-   `~/Documents/checkbook/checkbook-20260902-141530.db` — and tick **Open read-only**.
-3. Press **Open**.
+The page lists every copy this program can find, newest first, with when it was taken, how big it
+is, and where it is. It reads both places — the folder beside your checkbook and the `backups`
+folder inside it — and it decides what is a backup by looking inside each file, not by its name.
+A backup you renamed is still listed; a text file you named `checkbook-20260101-000000.db` is not.
+
+Your own `checkbook.db` is not in the list. It is the file being replaced, not a copy of itself.
+Files named `checkbook-replaced-…` are, though: those are checkbooks that earlier restores set
+aside, and restoring one is how you undo a restore.
+
+**The list is also there when nothing is open.** If your checkbook will not open at all — the file
+was truncated, or overwritten, or is not a database any more — the program still starts, still
+says what is wrong, and puts this same list on the page it shows you. That is the day this feature
+is for.
+
+## 2. Look at a backup first, if you want to be sure
+
+You do not have to guess which backup is the right one. You can read one before you use it.
+
+1. Press **Close checkbook** and confirm.
+2. On the page you land on, type the backup's full path into the box under **Open a checkbook** —
+   `~/Documents/checkbook/backups/checkbook-20260902-141530.db` — and press **Open**.
 
 The register comes up in slate, with a padlock at the top reading **Backup — nothing can be
 changed**. There is no entry form and no way to mark anything: nothing you do here can alter the
-file.
+file. Look at the accounts and the ending balances. Is this the day you want to be back at?
 
-Look at the accounts and the ending balances. Is this the day you want to be back at?
+A backup says in its own header that it is one, so it is opened for reading whether you tick
+**Open read-only** or not, and nothing is ever written to it. That is not a nicety: opening a
+database normally brings its schema up to date, which rewrites it, and a backup that has been
+rewritten is no longer the backup you took.
 
-**The box is not a formality, and it is not optional either.** Opening a database normally brings
-its schema up to date, which rewrites it — and a backup that has been rewritten is no longer the
-backup you took. So the program will not do it: a backup opened without the box ticked is refused,
-and the page tells you the two things you can do instead. Reading one is the only thing that can
-be done to it in place.
+When you are done, press **Close checkbook**, open your own checkbook again, and go back to
+step 1.
 
-If it is the wrong one, press **Close checkbook** again and try the next one.
+## 3. Restore it
 
-## 2. Restore it to a new file
+Choose a backup in the list and press **Restore this backup**.
 
-Press **Close checkbook** to let go of the backup. On the page you land on, under **Restore a
-backup**, there are two boxes:
+The program asks first. The confirmation names the file the records will come from, the file they
+will replace, and says plainly that anything entered since that backup was taken is not in it and
+that there is no way to merge the two. **Keep what I have** leaves everything as it is.
 
-- **Restore from** — already filled in with the backup you were just reading.
-- **Restore to** — the file to write. Type a name that does not exist yet, such as
-  `~/Documents/checkbook/checkbook-restored.db`.
+Press **Restore it**.
 
-Press **Restore**.
+## 4. Read the answer
 
-The program copies the backup to that name, brings the copy up to date if it came from an older
-release, and reads it back before giving it the name you asked for. **The backup itself is not
-altered** — it is still a backup afterwards, and you can restore it again.
+You land on your register, showing the restored records, at the same file name as before —
+`checkbook.db` is still `checkbook.db`. A notice above it names two files:
 
-**Nothing is ever written over.** Restoring to a name that already exists is refused, which is
-deliberate: you are doing this because something went wrong, and the file you would be replacing is
-often the one that shows what. That is why you restore to a new name and put it in place yourself,
-in step 4.
+- the backup the records came from, and
+- **the checkbook you had**, kept beside your database as `checkbook-replaced-20260902-153104.db`.
 
-## 3. Open it and check it
+Nothing was deleted. That kept file is an ordinary checkbook, not a backup, so if you decide you
+were wrong you open it directly — type its path into the box under **Open a checkbook** — rather
+than restoring it. It is also in the list on the restore page, if you would rather put it back in
+one press.
 
-The page names the file that was written and fills the box under **Open a checkbook** in with it.
-Leave **Open read-only** unticked and press **Open**.
+Check the ending balance against what you saw in step 2. Then press **Back up now**, so the trail
+continues from here.
 
-The register comes up on the restored records. Check the ending balance against what you saw in
-step 1 — it should be the same number.
+## What happens underneath
 
-## 4. Put it where you keep your records
+Worth knowing, because it decides what state you are in if something goes wrong.
 
-You now have three files: your old `checkbook.db`, the backup, and the restored copy. Decide which
-is the one you will use from now on.
+1. The backup is copied to a new file **while your checkbook is still open and working**. This is
+   the slow part and the part most likely to fail, and it fails harmlessly: if the backup is
+   damaged, or the disk is full, or the folder cannot be written to, you are told so with your
+   checkbook still in front of you and nothing about it changed.
+2. Only then is your checkbook closed, moved aside under its `checkbook-replaced-…` name, and the
+   copy moved into its place. Both are renames in one folder, so they take microseconds.
+3. Your checkbook is opened again and you land on it.
 
-Press **Close checkbook** first, so nothing is holding either file open. Then, in your file manager
-or a terminal:
+Its write-ahead log, if it had one, travels with it: you will see a `checkbook-replaced-….db-wal`
+beside the file it belongs to. That is correct and it matters — a log left behind would be
+adopted by the wrong database.
 
-```sh
-cd ~/Documents/checkbook
-mv checkbook.db checkbook-before-restore.db
-mv checkbook-restored.db checkbook.db
-```
+If a step fails, the program says which, and puts everything back. In every case both files are
+still on disk and nothing is deleted.
 
-On Windows PowerShell:
+## If it will not restore
 
-```powershell
-cd ~\Documents\checkbook
-Rename-Item checkbook.db checkbook-before-restore.db
-Rename-Item checkbook-restored.db checkbook.db
-```
-
-Keep `checkbook-before-restore.db`. Even a damaged file is evidence, and a file you replaced by
-mistake is only lost if you deleted it.
-
-**Do this only while the checkbook is closed.** The page saying no checkbook is open is the
-program telling you it is not holding the file: with it closed there is no `checkbook.db-wal`
-beside the database waiting to be folded back in, so the single file is the whole checkbook.
-
-Open it again, then take a backup of it, so the trail continues from here.
-
-## If the backup will not open
-
-The page says which of these it is, and what to do about it. In every case the file is left
-exactly as it was found.
+The page says which of these it is, and what to do about it.
 
 | What it says | What it means | What to do |
 | --- | --- | --- |
-| That file is a backup | You pressed **Open** without ticking **Open read-only**. | Tick the box to read it, or skip to step 2 and restore it. Nothing was written: a backup is never opened for writing, because the moment it were it would stop being the copy you took. |
-| That backup was written by an older version of the program | The backup predates a change to the database's structure, and reading it in place cannot bring it up to date without rewriting it. | Skip step 1 and restore it. Restoring migrates the copy, which is the one place that is safe, and leaves the backup as it is. |
+| Your checkbook is still open and nothing about it has changed | The copy failed before anything moved. | Read the rest of the sentence — it says whether the backup is damaged, the disk full, or the folder unwritable. Try an older backup. |
+| That backup was written by an older version of the program | The backup predates a change to the database's structure. | Restore it. Restoring brings the copy up to date, which is the one place that is safe, and leaves the backup as it is. Reading it in place is refused for the same reason. |
 | This checkbook was written by a newer version of the program | The backup came from a later release than the one you are running. | Use that release with this file, or restore an older backup. |
-| That file is not a checkbook | It is a SQLite file some other program made. | Check the path. Your backups are named `checkbook-YYYYMMDD-HHMMSS.db`. |
-| There is no file there | The path is wrong. | Check it against your file manager. Nothing is ever created from a typo. |
-| There is already a file at that path | The name under **Restore to** is taken. | Choose one that is not. The page suggests a free name beside the one you typed. |
+| That file is not one of the backups listed below | The file moved or was deleted since the page was drawn. | Reload the page and choose from the list as it is now. |
+| This page was drawn for a different checkbook | Another window closed or opened a checkbook after this page was drawn. | Reload the page and press again. Nothing was changed. |
+| Your checkbook could not be moved aside | Another program has the file open. Most often this is a backup tool or a search indexer, and on Windows it can be transient. | Close whatever has it, and press again. Nothing was replaced. |
+| The sample household is open | `-demo` keeps nothing on disk, so there is no file for a restored copy to replace. | Start the program on your own checkbook. |
+
+## Restoring to a file of its own
+
+Below the list there is a second form, **Or restore to a file of its own**. It takes a backup and a
+name to write, copies one to the other, and replaces nothing:
+
+- Use it when the file you want back is not the one you are working in — reading last year's
+  records without disturbing this year's, say.
+- Use it when the backup is on another disk, since the list only reads the checkbook's own folder.
+- The name you give must not exist yet. Nothing is ever written over.
+
+You then open the copy yourself.
 
 ## What a restore does not do
 
 Restoring replaces everything. Anything entered after the backup was taken is not in it, and there
 is no way to merge the two — the register does not guess at which of two versions of a record is
-right (SPECIFICATION.md RC-1, SC-4).
+right (SPECIFICATION.md RC-1, BK-7, SC-4).
 
 That is the argument for backing up often. It costs one press.
 
+Lifting *some* records out of a backup — one account, one month — would be an import rather than a
+restore, and it is not built. See
+[Restore and import](../explanations/restore-and-import.md) for why the difference matters.
+
 ## Next
 
+- [Restore and import](../explanations/restore-and-import.md) — why there are two words for
+  getting your records back
 - [How to create your first checkbook](create-your-first-checkbook.md) — where backups come from
 - [User manual](../references/user-manual.md) — backing up, closing, and opening in full

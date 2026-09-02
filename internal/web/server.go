@@ -83,6 +83,22 @@ type Options struct {
 	// only thing that knows how it was started, and printed here.
 	Restart RestartHint
 
+	// CheckbookPath is the file the program was started on, absolute.
+	//
+	// It is what "the checkbook" means when there is none open -- because it
+	// would not open, or because it has been closed -- and it is what a restore
+	// puts a file back at. The command makes it absolute before handing it over:
+	// a relative path is relative to a working directory the reader cannot see.
+	CheckbookPath string
+
+	// Problem describes a checkbook that would not open at startup.
+	//
+	// The program keeps running and serves the ordinary server rather than a
+	// page at every address, because the reader whose checkbook is corrupt is
+	// exactly the reader who needs the restore list -- and a mux that answers
+	// every address with one static page has no address to offer it at.
+	Problem *Problem
+
 	// Version is shown in the footer, so a bug report can say which build
 	// produced a page.
 	Version string
@@ -110,6 +126,20 @@ type Server struct {
 	closedPath     string
 	closedInMemory bool
 	closedIsBackup bool
+
+	// writablePath is the checkbook this program would put a restored file
+	// back at: the current one when it is a file that could be written to, and
+	// otherwise the last one that was, falling back to what -db named.
+	//
+	// It is not closedPath. That is set by retire for any checkbook, a backup
+	// opened read-only included, and restoring over the backup somebody was
+	// reading is precisely the thing BK-6 exists to stop.
+	writablePath string
+
+	// startupProblem is why the checkbook named by -db would not open. It is
+	// shown on the no-checkbook page until something opens successfully, at
+	// which point it stops being what is wrong.
+	startupProblem *Problem
 
 	// ctl serializes Open against Close. It is never taken by a request that
 	// reads the register, so opening a large database -- migrations and all --
@@ -146,11 +176,9 @@ func New(opts Options) (*Server, error) {
 	}
 	standalone := make(map[string]*template.Template, len(standaloneFiles))
 	for _, name := range standaloneFiles {
-		if name == problemFile {
-			// NewProblem parses that one for itself, at the point it is needed.
-			continue
-		}
-		t, err := template.New(name).ParseFS(templateFS, "templates/"+name)
+		// The partials come along, because a standalone page uses the same
+		// restore list the layout pages do and there is one copy of it.
+		t, err := template.New(name).ParseFS(templateFS, append([]string{"templates/" + name}, partialPaths()...)...)
 		if err != nil {
 			return nil, fmt.Errorf("web: parse %s: %w", name, err)
 		}
@@ -158,6 +186,9 @@ func New(opts Options) (*Server, error) {
 	}
 
 	s := &Server{
+		writablePath:   opts.CheckbookPath,
+		startupProblem: opts.Problem,
+
 		open:    opts.Open,
 		quit:    opts.Quit,
 		restart: opts.Restart,
@@ -228,11 +259,24 @@ func (s *Server) routes() {
 	if s.open != nil {
 		s.mux.HandleFunc("POST /checkbook/open", s.control(s.handleOpen))
 	}
-	// Restoring writes a third file and swaps nothing, so unlike open it needs
-	// no Opener and is always available. It is a control route for the same
-	// reason the others are: its effect is on the household's folder rather
-	// than on a record.
-	s.mux.HandleFunc("POST /checkbook/restore", s.control(s.handleRestore))
+	// Restoring is four routes, and the split is what keeps every offer on the
+	// page honest.
+	//
+	// The list and the confirmation are GETs and are always registered: nothing
+	// open -- including a checkbook that would not open -- is the case the
+	// feature exists for, so neither may be wrapped in withCheckbook, which
+	// answers 503 in exactly that case.
+	//
+	// The one press that replaces the checkbook has to reopen afterwards, so it
+	// needs an Opener and is withheld without one. The older restore-to-a-copy
+	// does not: it writes a third file and swaps nothing, which is what lets the
+	// rule that restoring is always offered survive.
+	s.mux.HandleFunc("GET /checkbook/restore", s.handleRestorePage)
+	s.mux.HandleFunc("GET /checkbook/restore/confirm", s.handleConfirmRestore)
+	if s.open != nil {
+		s.mux.HandleFunc("POST /checkbook/restore", s.control(s.handleRestoreSwap))
+	}
+	s.mux.HandleFunc("POST /checkbook/restore/copy", s.control(s.handleRestoreCopy))
 	if s.quit != nil {
 		s.mux.HandleFunc("GET /quit", s.handleConfirmQuit)
 		s.mux.HandleFunc("POST /quit", s.control(s.handleQuit))
@@ -271,19 +315,21 @@ func parsePages() (map[string]*template.Template, error) {
 	pages := make(map[string]*template.Template)
 	for _, name := range names {
 		base := name[len("templates/"):]
-		// The layout is not a page, and several pages are not built on the
-		// layout: see problem.gohtml for why they stand alone.
-		if base == layoutFile || isStandalone(base) {
+		// The layout is not a page, a partial is not a page, and several pages
+		// are not built on the layout: see no-checkbook.gohtml for why those
+		// stand alone.
+		if base == layoutFile || isPartial(base) || isStandalone(base) {
 			continue
 		}
-		t, err := template.New(layoutFile).ParseFS(templateFS, "templates/"+layoutFile, name)
+		files := append([]string{"templates/" + layoutFile, name}, partialPaths()...)
+		t, err := template.New(layoutFile).ParseFS(templateFS, files...)
 		if err != nil {
 			return nil, fmt.Errorf("web: parse %s: %w", base, err)
 		}
 		pages[base] = t
 	}
 
-	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml", "new-account.gohtml", "close-checkbook.gohtml"} {
+	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml", "new-account.gohtml", "close-checkbook.gohtml", "restore.gohtml", "restore-confirm.gohtml"} {
 		if pages[required] == nil {
 			return nil, fmt.Errorf("web: missing template %s", required)
 		}
@@ -293,10 +339,6 @@ func parsePages() (map[string]*template.Template, error) {
 
 const (
 	layoutFile = "layout.gohtml"
-
-	// problemFile is rendered by NewProblem when there is no database to serve a
-	// register from. It is parsed on its own, not with the layout.
-	problemFile = "problem.gohtml"
 
 	// noCheckbookFile is rendered when the checkbook has been closed. It stands
 	// alone for the same reason problemFile does: the layout frames a page with
@@ -315,7 +357,7 @@ const (
 // and New parses each on its own; a page left out of this list would be parsed
 // against the layout, define no "main", and fail at render time -- which is
 // exactly what parsing at startup exists to prevent.
-var standaloneFiles = []string{problemFile, noCheckbookFile, quitFile, goodbyeFile}
+var standaloneFiles = []string{noCheckbookFile, quitFile, goodbyeFile}
 
 // isStandalone reports whether base is one of them.
 func isStandalone(base string) bool {
@@ -325,6 +367,33 @@ func isStandalone(base string) bool {
 		}
 	}
 	return false
+}
+
+// partialFiles define named templates rather than a page, and are parsed into
+// every page set -- layout pages and standalone pages alike.
+//
+// There is one of them, and it earns its place: the list of backups to restore
+// from appears both on its own page and on the page the reader lands on when
+// nothing is open, and two copies of that markup would drift.
+var partialFiles = []string{"restore-list.gohtml"}
+
+// isPartial reports whether base is one of them.
+func isPartial(base string) bool {
+	for _, name := range partialFiles {
+		if base == name {
+			return true
+		}
+	}
+	return false
+}
+
+// partialPaths is partialFiles as ParseFS wants them.
+func partialPaths() []string {
+	paths := make([]string, 0, len(partialFiles))
+	for _, name := range partialFiles {
+		paths = append(paths, "templates/"+name)
+	}
+	return paths
 }
 
 // layout is the part of a page that does not depend on which page it is. Every
@@ -377,6 +446,12 @@ type layout struct {
 	// restore it (BK-6).
 	IsBackup bool
 
+	// CanRestore says the one-press restore is available, so the sidebar offers
+	// it. It is withheld for the sample household, for a backup being read, and
+	// for a build with no Opener -- an action that could only be refused is not
+	// an offer worth making.
+	CanRestore bool
+
 	// Ephemeral marks a database held in memory -- the sample household -demo
 	// serves. Every page says so, because a register that keeps nothing looks
 	// exactly like one that does, and somebody entering real transactions into
@@ -397,7 +472,7 @@ func (s *Server) pageLayout(r *http.Request, cb *checkbook, title string, accoun
 		Accounts: accounts,
 		ActiveID: activeID,
 		ReturnTo: returnTo(r),
-		Notice:   noticeFor(r),
+		Notice:   s.noticeFor(r),
 	}
 	if cb != nil {
 		l.Database = cb.path
@@ -407,6 +482,8 @@ func (s *Server) pageLayout(r *http.Request, cb *checkbook, title string, accoun
 		l.Generation = cb.gen
 		l.Open = true
 	}
+	l.CanRestore = s.open != nil && s.checkbookPath() != "" &&
+		(cb == nil || (!cb.inMemory && !cb.readOnly))
 	return l
 }
 

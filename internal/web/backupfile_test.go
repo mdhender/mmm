@@ -122,7 +122,7 @@ func TestRestoreFromTheBrowser(t *testing.T) {
 	closeCheckbook(t, h)
 
 	dest := filepath.Join(filepath.Dir(path), "restored.db")
-	w := postFromPage(t, h, "/checkbook/restore", url.Values{"source": {path}, "dest": {dest}})
+	w := postFromPage(t, h, "/checkbook/restore/copy", url.Values{"source": {path}, "dest": {dest}})
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("restore = %d, want 303: %s", w.Code, w.Body.String())
 	}
@@ -174,7 +174,7 @@ func TestRestoreRefusalsSayWhatToDoNext(t *testing.T) {
 		{"with no destination", path, "", "Type the path to restore to"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			w := postFromPage(t, h, "/checkbook/restore", url.Values{"source": {tt.source}, "dest": {tt.dest}})
+			w := postFromPage(t, h, "/checkbook/restore/copy", url.Values{"source": {tt.source}, "dest": {tt.dest}})
 			if w.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("status = %d, want 422", w.Code)
 			}
@@ -213,15 +213,20 @@ func TestClosingABackupOffersToRestoreIt(t *testing.T) {
 	}
 }
 
-// TestRestoreIsOfferedWithoutAnOpener: restoring writes a third file and swaps
-// nothing, so unlike Open it needs nothing injected and is always honest.
+// TestRestoreIsOfferedWithoutAnOpener: restoring to a file of its own writes a
+// third file and swaps nothing, so unlike Open it needs nothing injected and is
+// always honest. The one press that replaces the checkbook does need an Opener,
+// and it is withheld with the reason rather than offered and then refused.
 func TestRestoreIsOfferedWithoutAnOpener(t *testing.T) {
 	store, _ := openFile(t)
 	h := newServer(t, web.Options{Store: store})
 
 	closeCheckbook(t, h)
 	body := get(t, h, "/checkbook").Body.String()
-	if !strings.Contains(body, `action="/checkbook/restore"`) {
-		t.Error("restoring is not offered when the program cannot open a checkbook")
+	if !strings.Contains(body, `action="/checkbook/restore/copy"`) {
+		t.Error("restoring to a copy is not offered when the program cannot open a checkbook")
+	}
+	if !strings.Contains(body, "This build cannot open a checkbook by itself") {
+		t.Error("the page does not say why the one-press restore is not offered")
 	}
 }

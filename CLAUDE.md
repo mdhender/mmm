@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `mmm` is a local-first household **checkbook** written in Go. The repository is early. The
 storage layer, the domain packages behind the register, and a web UI exist (`cmd/checkbook` serves
 it). The register creates accounts, displays them, takes new transactions, and marks them cleared,
-and the checkbook itself can be backed up, closed, reopened, opened read-only, restored from a
-backup, and quit from the browser; editing an account or a transaction, splitting, transfers,
-importing, and reconciling do not exist yet. Much of the code written here is still creating the application rather than
+and the checkbook itself can be backed up, closed, reopened, opened read-only, replaced by a
+backup in one press, and quit from the browser; editing an account or a transaction, splitting,
+transfers, importing, and reconciling do not exist yet. Much of the code written here is still creating the application rather than
 modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
@@ -99,9 +99,10 @@ reuse them rather than becoming a second application.
   balance is computed there, not in a template**, so every interface shows the same number.
   `transaction.Create` writes a transaction and its splits in one database transaction and
   rejects splits that do not total the amount.
-- `internal/backup` — writes a verified, timestamped copy of a database (BK-2, BK-5) and restores
-  one (BK-4). `backup.Create(ctx, src, dir)` takes a **path**, not a `*storage.Store`, which is
-  what lets the same code copy a checkbook that is open and one just closed. `VACUUM INTO` on a
+- `internal/backup` — writes a verified, timestamped copy of a database (BK-2, BK-5), restores one
+  (BK-4), lists the copies it can find (`Find`), and puts a restored one at the checkbook's name
+  (`Replace`, BK-7). `backup.Create(ctx, src, dir)` takes a **path**, not a `*storage.Store`, which
+  is what lets the same code copy a checkbook that is open and one just closed. `VACUUM INTO` on a
   connection the package opens itself; never inside a transaction (`VACUUM` fails there, which also
   rules out `ExecuteScript`), and the destination is **bound as a parameter**. The copy is written
   under a working name, **stamped with `storage.BackupAppID`**, reopened with
@@ -143,6 +144,21 @@ one thing a box can mean -- open a checkbook that *could* be written to without 
 and BK-6 is untouched: the fallback is `OpenReadOnly`, and `Open` still refuses on its own. An old
 backup still fails, in `OpenReadOnly`, with `ErrDatabaseTooOld`; such a file is restored, not read.
 
+`ApplicationID` reads the file's **header bytes**, not a `PRAGMA` on an open connection, and that
+is not an optimization. Opening a WAL database even read-only wants a `-shm` beside it, so asking
+the question used to leave a file in the household's folder and to fail outright in a folder that
+cannot be written to — which `Replace` and `Find` both do routinely. The offsets are fixed by
+SQLite's file format.
+
+`refuseBackup` also refuses **a file that has bytes and is not a SQLite database at all**, and that
+branch is load-bearing rather than tidy. `sqlitemigration.Pool.Take` retries a pool it could not
+open every five seconds for as long as its context lasts, and `sqlitex.NewPool` failing is one of
+the cases it retries rather than reports — so `storage.Open` on a truncated or overwritten
+checkbook does not fail, it **hangs**, and the browser gets a listener that accepts and never
+answers. That is the worst possible response to the one emergency this program has, so the file is
+asked what it is before sqlitemigration sees it. An **empty** file still opens, because SQLite will
+initialize one. `TestOpenRefusesAFileThatIsNotADatabaseAtOnce` pins the deadline.
+
 The check is `refuseBackup`, called from `Open` **before the pool is built**. Reaching
 sqlitemigration is already too late: it would migrate the file. It reads the header on a connection
 of its own via `storage.ApplicationID`, and anything that is not a readable SQLite database falls
@@ -166,6 +182,52 @@ this is for.
 
 `Restore`'s wraps use `%w: %w` rather than `%w: %v`, so a caller can tell `ErrMissingFile` from
 `ErrNotBackup` and `ErrDatabaseTooNew` from `ErrNotVerified` and give advice that fits.
+
+### Restoring in place
+
+**`backup.Replace(restored, checkbook)` is the file mechanics of the one-press restore**, and it
+takes **no `ctx`**: three renames are not cancellable, and a context accepted and ignored is a lie.
+The caller must have closed the checkbook first — on Windows the rename failing is the assertion,
+on Unix there is nothing to assert. An **absent checkbook is not an error**: that is the case where
+`-db` never opened, and `kept` comes back empty.
+
+**The sidecars move with the database, and they move back in reverse.** SQLite binds a `-wal` to
+its database by filename and nothing inside the log records a path, so a `.db` and its `-wal`
+renamed together recover exactly as they would have in place. The bug this ordering exists to avoid
+is the `-wal` moving and the `.db` failing to: the checkbook would still be at its name while its
+committed frames sat beside another one, and reopening it would **silently lose every transaction
+in that log** — the quiet loss CO-3 forbids, arriving through a filesystem instead of an `UPDATE`.
+A `-shm` may be removed if it will not move; a `-wal` never may. `TestReplacePutsTheWalBackWhenThe
+AsideCannotFinish` pins it, and it lives in an internal test with `renameFile` swapped out, because
+no filesystem lets a test fail one rename in a folder while its neighbours succeed.
+
+Three sentinels, because the three outcomes need three different things from the reader:
+`ErrCheckbookNotMoved` (nothing moved), `ErrNotPutInPlace` (the checkbook is back), and
+`ErrCheckbookDisplaced` — both failed, the one unacceptable outcome, which earns its own sentinel
+so the browser answers it differently and names both files. `os.Rename` replaces an existing file
+on both platforms, so the assertion that the checkbook's name is free before the second rename is
+what catches a second swap racing this one, not paranoia.
+
+**No `backup.Create` before the swap.** `VACUUM INTO` fails on a damaged database, so requiring one
+would block exactly the emergency this exists for. **BK-1 is satisfied by the move-aside**: the
+kept file is a timestamped copy of the pre-operation state, complete with its `-wal`, and — carrying
+`AppID` rather than `BackupAppID` — openable directly, which is a shorter road back than a file
+that must itself be restored. **No hard link before the rename** either: it fails on FAT and exFAT
+and is same-volume NTFS only, so PL-5 goes. Both were considered; neither is to be proposed again.
+
+**`Find(dir)` reads `dir` and `dir/backups`, and decides what a backup is by its header** — BK-6's
+last sentence. The folder is where we look; `storage.ApplicationID` is what decides. It skips
+`-wal`, `-shm` and `.checkbook-*.tmp` **by name, before opening them**, since a concurrent restore's
+working copy should not be opened at all; it dedupes by cleaned absolute path, because `dir/backups`
+may be a symlink to `dir`; and it stats and sorts before confirming the newest fifty, since reading
+an application id used to open a connection per file. `Folder(checkbook)` is the one place the
+`backups/` convention is spelled — `backup.Create` learns none of it, so `dir` stays an argument.
+
+**`Back up now` writes into `<dir>/backups/`, creating that one directory if it is missing.** That
+is ST-10, not a violation of ST-6: ST-6 is about opening a database, where no directory is ever
+made. ST-10 requires the program to **say that it did so**, which is what the `newfolder` parameter
+on the redirect is for. Backups already sitting beside the checkbook keep working and are still
+listed; nothing is moved.
 
 ### Storage
 
@@ -373,17 +435,23 @@ another process. Two copies are the two-tab case the project already supports by
 
 ### When the database will not open
 
-`cmd/checkbook` does not exit when `openStore` fails. It builds `web.NewProblem` from
-`web.DescribeOpenError` and serves that one page at **every** address with a 503, opens the
-browser on it, and exits 1 once stopped. The reason is PL-4's own premise: the program is started
-by double-clicking it, so a message printed to a terminal nobody is looking at is not a message.
-Only failures that prevent listening at all (a non-loopback `-host`, a port in use) still exit
-early, because there is then no way to serve the page.
+`cmd/checkbook` does not exit when `openStore` fails. It builds `web.DescribeOpenError` into
+`Options.Problem` and serves **the ordinary `Server`** with no store, opens the browser on it, and
+exits 1 once stopped. The reason is PL-4's own premise: the program is started by double-clicking
+it, so a message printed to a terminal nobody is looking at is not a message. Only failures that
+prevent listening at all (a non-loopback `-host`, a port in use) still exit early, because there is
+then no way to serve the page.
+
+**`NewProblem` is gone, and must not come back.** It was a mux of its own whose `/` answered every
+address with one static page, and that is exactly wrong for the case it served: the household whose
+checkbook is corrupt is the household that most needs the restore list, and a page at every address
+leaves no address to put one at. `Server.startupProblem` is shown on the no-checkbook page and
+cleared by `adopt`, since once something opens it is no longer what is wrong.
+`TestARegisterThatWouldNotOpenStillOffersRestore` is what keeps this from being undone.
 
 `DescribeOpenError` matches on **sentinels, not message text**, so a reworded underlying error
 cannot silently turn a specific page into a vague one; the unrecognized case still carries next
-steps. `problem.gohtml` is standalone and deliberately not built on `layout.gohtml` — the layout's
-frame is the account list, and there is no database to read one from.
+steps.
 
 ### Web UI
 
@@ -393,7 +461,10 @@ design (PL-7), which is only safe because it is unreachable from off the machine
 literal IPs and the name `localhost` are accepted, because resolving anything else could mean a
 DNS query and the program must run without a network (PL-3). `-port` defaults to 0, so the system
 picks a free port and the URL is printed; `-demo` serves a sample household from an in-memory
-store and writes nothing to disk.
+store and writes nothing to disk. **`-db` is made absolute at startup**, once, for the reason
+`browserOpener` already did it for a typed path: the program may have been started from anywhere,
+a relative path is relative to a working directory the reader cannot see, and it is what BK-3's
+footer shows.
 
 Shutdown order matters: `srv.Shutdown` runs **before** the store is closed, because
 `Pool.Close` blocks until every borrowed connection comes back and a handler still running holds
@@ -448,12 +519,37 @@ HTML. No SQL and no balance arithmetic belong here.
   `dbFailed` rather than `fail` for a database error on a leased checkbook: it compares generations
   and answers the no-checkbook page instead of "the database reported an error while listing
   accounts".
-- **Restoring and opening stay two verbs.** `POST /checkbook/restore` writes a third file and
-  swaps nothing, so it needs no `Opener` and is registered unconditionally; the reader then opens
-  the result in the ordinary way. Rolling them together would mean one press both copies a file and
-  takes the register away from every tab the household has open. The form lives on the
-  no-checkbook page and nowhere else — it needs a name to write to, which is a pair of boxes rather
-  than a sidebar button — and its **Restore from** box prefills from the backup just closed.
+- **Restore is four routes, and the split is what keeps every offer honest.**
+  `GET /checkbook/restore` (the list) and `GET /checkbook/restore/confirm` (RG-3) are **always**
+  registered and **must not be wrapped in `withCheckbook`**, which answers 503 with nothing open —
+  and nothing-open, including a checkbook that would not open, is the case the feature exists for.
+  `POST /checkbook/restore` replaces the checkbook and has to reopen, so it is registered **only
+  when there is an `Opener`**. `POST /checkbook/restore/copy` is the older restore-to-a-new-file,
+  unchanged, which needs no `Opener` — that is how the rule that restoring is always offered
+  survives. Both the list and the copy form appear on the no-checkbook page and on the restore
+  page, from one partial (`restore-list.gohtml`, in `partialFiles`), because two copies of markup
+  that acts on the household's whole file would drift.
+- **The swap is restore first, close second**, and the order is not the obvious one.
+  `backup.Restore` never touches the checkbook, so the long, failure-prone step runs **while the
+  register is still open and serving**: a bad backup, a full disk or an unwritable folder is
+  refused with the checkbook still open, where there is no recovery path to write and none to test.
+  It is also a free write-probe on the folder, and it shrinks the 503 window to a close, two
+  renames and an open. `TestAFailedRestoreLeavesTheCheckbookOpen` is what stops this regressing.
+- **`ctl` is held across close, replace and reopen as one critical section**, and the reopen runs
+  on a **detached context**. Between the two renames there is no file at the checkbook's name, and
+  a `POST /checkbook/open` for that name in that window would have `storage.Open` *create* an empty
+  checkbook, migrate it and adopt it — after which the second rename would put a file over it,
+  leaving a live pool on an unlinked inode. `handleOpen` already holds `ctl` for its whole body, so
+  this blocks only other control actions; `backup.Restore` stays **outside** it, since a `VACUUM`
+  must not block Close or Quit. The detached context is so that a reader closing the tab mid-swap
+  cannot cancel the reopen and leave the program with nothing open.
+- **A restore only ever acts on a path the listing just returned**, re-derived on the request that
+  acts rather than carried over from the one that drew the page, and the press carries the
+  checkbook's generation exactly as the close form does (CO-3).
+- **`writablePath` is not `closedPath`.** `closedPath` is set by `retire` for *any* checkbook, a
+  backup opened read-only included, and restoring over the backup somebody was reading is precisely
+  what BK-6 exists to stop. `Server.checkbookPath()` answers with the current checkbook when it is
+  writable and on disk, and `writablePath` — seeded from `Options.CheckbookPath` — otherwise.
 - **Control routes** — `/backup`, `/checkbook/close`, `/checkbook/open`, `/checkbook/restore`,
   `/quit` — act on the file
   or the process rather than on a record. They are POST only and go through `Server.control`, which
@@ -462,13 +558,13 @@ HTML. No SQL and no balance arithmetic belong here.
   Quit confirm first (RG-3), and the close form carries the checkbook's generation so a stale tab
   is refused the way `transaction.SetStatus` refuses a stale row (CO-3).
 - **Pages not built on the layout** are listed in `standaloneFiles` and parsed on their own.
-  `problem.gohtml`, `no-checkbook.gohtml`, `quit.gohtml`, `goodbye.gohtml`. Leaving one off that
+  `no-checkbook.gohtml`, `quit.gohtml`, `goodbye.gohtml`. Leaving one off that
   list parses it against the layout, where it defines no `main` and fails at render time — which is
   what parsing at startup exists to prevent. `goodbye.gohtml` carries its styles **inline**:
   `/static/app.css` is a second request and the server is gone by the time it is made.
-- **The no-checkbook page reuses `DescribeOpenError`, not `NewProblem`.** `NewProblem` builds its
-  own catch-all mux; swapping `http.Server.Handler` while `Serve` runs is a data race, and its `/`
-  route would swallow the two addresses the reader has left.
+- **Every failure to open reaches the reader through `DescribeOpenError` and the no-checkbook
+  page**, including the one at startup, which arrives as `Options.Problem`. See the paragraph
+  retiring `NewProblem` above for why a page served at every address is the wrong shape here.
 - **`main` injects what `web` must not know.** `Options.Open` is an `Opener`, because seeding the
   demo exists only in the command and `openStore` owns ST-6's wording; `Options.Quit` is a second
   `context.CancelFunc` stacked on the signal's; `Options.Restart` is composed at startup, before
@@ -495,8 +591,10 @@ pointers — if this list and the specification ever disagree, the specification
   edits to prior transactions.
 - **Explicit migrations, confirmed destructive actions, timestamped backups before risky
   operations** (ST-4, RG-3, BK-1). Backups exist now: `internal/backup`, and **Back up now** in the
-  sidebar. A backup is not a file that was written (BK-5), and **a backup is never opened for
-  writing** (BK-6) — see Backups above.
+  sidebar. A backup is not a file that was written (BK-5), **a backup is never opened for
+  writing** (BK-6), and **restore replaces a whole file, keeps what it displaces, and never
+  merges** (BK-7) — see Backups above. ST-10 licenses the one directory the program creates,
+  `backups/`, and requires it to say that it did.
 - **No ads, nags, expiring features, or degraded old releases** (PV-3, PV-4).
 
 For scope questions apply SC-1's three tests; SC-2 lists what is out of scope and SC-3 fixes the

@@ -1,0 +1,79 @@
+{{- /*
+  The list of files a restore could be made from, and the press that makes it.
+
+  It is a partial rather than markup on a page because it appears in two places
+  that cannot share a page: the restore page, which is built on the layout, and
+  the page shown when nothing is open, which stands alone. Two copies of a list
+  that acts on the household's whole file would drift, and the day they drifted
+  would be the day somebody was restoring.
+
+  The dot here is a *restoreOffer, never a page.
+*/ -}}
+{{define "restore-list"}}
+    {{if .Error}}
+        <p class="entry-error" role="alert">{{.Error}}</p>
+    {{else if .Backups}}
+        <p class="muted">
+            {{- /* Where we looked, said plainly: a household that keeps their
+                   copies somewhere else should be able to see at once that this
+                   is not where they are. */ -}}
+            Backups in <code>{{.Folder}}</code> and the <code>backups</code> folder beside it, newest first.
+        </p>
+        <form method="post" action="/checkbook/restore" class="restore-list-form">
+            <input type="hidden" name="generation" value="{{.Generation}}">
+            <input type="hidden" name="return" value="{{.ReturnTo}}">
+            <table class="backups">
+                <thead>
+                <tr>
+                    <th scope="col"><span class="visually-hidden">Choose</span></th>
+                    <th scope="col">Taken</th>
+                    <th scope="col" class="num">Size</th>
+                    <th scope="col">File</th>
+                </tr>
+                </thead>
+                <tbody>
+                {{range $i, $b := .Backups}}
+                    <tr>
+                        <td>
+                            {{- /* A radio rather than a button per row: choosing
+                                   and pressing are two steps, and the press
+                                   leads to a confirmation rather than to the
+                                   swap (RG-3). */ -}}
+                            <input type="radio" id="backup-{{$i}}" name="path" value="{{$b.Path}}"{{if eq $i 0}} checked{{end}}>
+                        </td>
+                        <td><label for="backup-{{$i}}">{{$b.Taken}}</label>
+                            {{if not $b.FromName}}
+                                <span class="muted" title="This file's name is not one this program wrote, so the date is when the file was last changed rather than when the copy was taken.">&mdash; file date</span>
+                            {{end}}
+                        </td>
+                        <td class="num">{{$b.Size}}</td>
+                        <td><code>{{$b.Name}}</code>{{if not $b.IsBackup}} <span class="muted" title="A checkbook rather than a backup. Restoring from one is how a household moves their records to another machine.">&mdash; a checkbook</span>{{end}}</td>
+                    </tr>
+                {{end}}
+                </tbody>
+            </table>
+            {{if .CanRestore}}
+                {{- /* formaction, so the same chosen row can go to the
+                       confirmation. The form's own action is the POST that
+                       does the work, and the confirmation is a GET, so this
+                       button carries both. */ -}}
+                <p class="restore-actions">
+                    <button type="submit" formmethod="get" formaction="/checkbook/restore/confirm">Restore this backup</button>
+                </p>
+                <p class="muted entry-note">
+                    Your records will be replaced by the ones in the backup you choose. The checkbook
+                    you have now is kept, under a new name, in the same folder &mdash; so nothing is
+                    lost either way. You will be asked to confirm first.
+                </p>
+            {{else}}
+                <p class="muted entry-note">{{.Withheld}}</p>
+            {{end}}
+        </form>
+    {{else}}
+        <p class="muted">
+            No backups were found{{if .Folder}} in <code>{{.Folder}}</code> or the <code>backups</code> folder beside it{{end}}.
+            {{if .Folder}}Copies kept on another disk can still be restored with the form below.{{end}}
+        </p>
+        {{if and (not .CanRestore) .Withheld}}<p class="muted entry-note">{{.Withheld}}</p>{{end}}
+    {{end}}
+{{end}}

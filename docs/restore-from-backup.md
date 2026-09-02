@@ -2,8 +2,26 @@
 
 Design intent for the slice that turns restore from two typed paths and two `mv`s into one press.
 Like the other notes directly under `docs/`, this is **not binding** — where it conflicts with
-`SPECIFICATION.md`, the specification wins. **Nothing described here is built yet.** What exists
-today is the two-box restore described in the user manual.
+`SPECIFICATION.md`, the specification wins.
+
+**Built in 0.21.0-beta.** This note is kept as the record of the argument, not as a description of
+the program: for that, read
+[the user manual](references/user-manual.md#restoring-a-backup),
+[how to restore a backup](how-to/restore-a-backup.md), and
+[restore and import](explanations/restore-and-import.md). Three things were decided differently
+while building it, and are noted here rather than silently:
+
+- **There is no "Somewhere else?" box** on the list. A typed path cannot be checked against a
+  listing the program just made, which is the whole guard on the one-press restore, and the
+  restore-to-a-copy form below already covers a backup kept on another disk.
+- **`backup.Replace` picks the kept name itself**, deriving the stamp from the restored file's
+  name (`RestoredName` is exported so the caller picks that one first). The pair still share a
+  stamp; the signature stays the two arguments section 6 gives it.
+- **`storage.Open` had to be fixed first.** It did not merely serve the wrong page for a corrupt
+  checkbook — it hung. `sqlitemigration.Pool.Take` retries a pool it could not open every five
+  seconds for as long as its context lasts, so a truncated or overwritten checkbook produced a
+  listener that accepted and never answered. The header is now checked before sqlitemigration sees
+  the file. Without that, prerequisite one delivers a page nobody can reach.
 
 ---
 

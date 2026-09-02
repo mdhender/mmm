@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -44,6 +45,9 @@ func newServer(t *testing.T, opts web.Options) *web.Server {
 	opts.Version = "0.0.0-test"
 	if opts.Log == nil {
 		opts.Log = slog.New(slog.DiscardHandler)
+		if testing.Verbose() {
+			opts.Log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+		}
 	}
 	s, err := web.New(opts)
 	if err != nil {

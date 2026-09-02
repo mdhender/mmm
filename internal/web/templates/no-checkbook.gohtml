@@ -2,11 +2,15 @@
   Shown when no database is open: because the reader closed one, or because the
   program was started without one.
 
-  This page stands alone rather than using layout.gohtml, for the same reason
-  problem.gohtml does: the frame there is built around the account list and the
-  database in use, and here there is neither. An empty sidebar reading "None
-  yet." would suggest an empty checkbook, which is a very different thing from
-  no checkbook at all.
+  This page stands alone rather than using layout.gohtml: that frame is built
+  around the account list and the database in use, and here there is neither. An
+  empty sidebar reading "None yet." would suggest an empty checkbook, which is a
+  very different thing from no checkbook at all.
+
+  It is also the page a household reaches when the checkbook named at startup
+  would not open, which is why the list of backups is on it and near the top. A
+  register that will not open is the main reason to restore, and it used to be
+  the one case that could not reach the restore form at all.
 */ -}}
 <!doctype html>
 <html lang="en">
@@ -77,6 +81,7 @@
             <dt>Tried to open</dt>
             <dd><code>{{.Problem.Database}}</code></dd>
         </dl>
+        <p class="lead">Nothing has been changed. What to do next:</p>
         <ol class="steps">
             {{range .Problem.Steps}}<li>{{.}}</li>{{end}}
         </ol>
@@ -92,6 +97,45 @@
             </ul>
         {{end}}
     {{end}}
+
+    {{- /* Outside the CanOpen block, because restoring needs no Opener: the
+           copy form writes a third file and swaps nothing, so the route is
+           always registered and the offer is always honest. The one press that
+           replaces the checkbook is inside the partial, which withholds itself
+           when there is no Opener. */ -}}
+    <h2 id="restore">Restore a backup</h2>
+    {{if .RestoreMessage}}<p class="entry-error" role="alert">{{.RestoreMessage}}</p>{{end}}
+    <p>
+        A backup cannot be opened and worked in &mdash; the moment it were written to it would
+        stop being the copy you took. Restoring makes a checkbook out of one instead: it copies
+        the backup, brings the copy up to date if it came from an older release, and reads it
+        back before giving it a name.
+    </p>
+
+    {{template "restore-list" .Restore}}
+
+    <h3 class="restore-copy-heading">Or restore to a file of its own</h3>
+    <form class="entry account-form" method="post" action="/checkbook/restore/copy">
+        <input type="hidden" name="return" value="/checkbook">
+        <div class="entry-fields">
+            <label class="f-path">Restore from
+                <input type="text" name="source" value="{{.RestoreSource}}"
+                       autocomplete="off" spellcheck="false" placeholder="checkbook-20260902-141530.db">
+            </label>
+            <label class="f-path">Restore to
+                <input type="text" name="dest" value="{{.RestoreDest}}"
+                       autocomplete="off" spellcheck="false" placeholder="checkbook-restored.db">
+            </label>
+            <div class="f-add">
+                <button type="submit">Restore to a copy</button>
+            </div>
+        </div>
+        <p class="muted entry-note">
+            The file you restore to must not exist yet. Nothing is ever written over: the file
+            you would be replacing is often the one that shows what went wrong. Open the
+            restored copy, check the balances, and put it where you keep your records yourself.
+        </p>
+    </form>
 
     {{if .CanOpen}}
         <h2>Open a checkbook</h2>
@@ -134,39 +178,6 @@
             when the program stops.
         </p>
     {{end}}
-
-    {{- /* Outside the CanOpen block, because restoring needs no Opener: it
-           writes a third file and swaps nothing, so the route is always
-           registered and the offer is always honest. */ -}}
-    <h2 id="restore">Restore a backup</h2>
-    {{if .RestoreMessage}}<p class="entry-error" role="alert">{{.RestoreMessage}}</p>{{end}}
-    <p>
-        A backup cannot be opened and worked in &mdash; the moment it were written to it would
-        stop being the copy you took. Restoring makes a fresh checkbook out of one instead: it
-        copies the backup to a name you choose, brings the copy up to date if it came from an
-        older release, and reads it back before giving it that name.
-    </p>
-    <form class="entry account-form" method="post" action="/checkbook/restore">
-        <input type="hidden" name="return" value="/checkbook">
-        <div class="entry-fields">
-            <label class="f-path">Restore from
-                <input type="text" name="source" value="{{.RestoreSource}}"
-                       autocomplete="off" spellcheck="false" placeholder="checkbook-20260902-141530.db">
-            </label>
-            <label class="f-path">Restore to
-                <input type="text" name="dest" value="{{.RestoreDest}}"
-                       autocomplete="off" spellcheck="false" placeholder="checkbook-restored.db">
-            </label>
-            <div class="f-add">
-                <button type="submit">Restore</button>
-            </div>
-        </div>
-        <p class="muted entry-note">
-            The file you restore to must not exist yet. Nothing is ever written over: the file
-            you would be replacing is often the one that shows what went wrong. Open the
-            restored copy, check the balances, and put it where you keep your records yourself.
-        </p>
-    </form>
 
     {{if .CanQuit}}
         <h2>Or stop the program</h2>

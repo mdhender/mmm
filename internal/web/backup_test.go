@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mdhender/mmm/internal/backup"
 	"github.com/mdhender/mmm/internal/storage"
 )
 
@@ -67,9 +68,13 @@ func TestBackupNowWritesAVerifiedCopy(t *testing.T) {
 		t.Fatal("the redirect does not name the backup that was written")
 	}
 
-	written := filepath.Join(filepath.Dir(path), name)
+	// In the backups folder beside the checkbook, which was made for it (ST-10).
+	written := filepath.Join(backup.Folder(path), name)
 	if _, err := os.Stat(written); err != nil {
 		t.Fatalf("the named backup is not there: %v", err)
+	}
+	if loc.Query().Get("newfolder") == "" {
+		t.Error("the redirect does not say the backups folder was created")
 	}
 	// Read-only, because that is now the only way a backup opens (BK-6). It is
 	// still a checkbook inside, which is what BK-5 asks.
@@ -93,6 +98,23 @@ func TestBackupNowWritesAVerifiedCopy(t *testing.T) {
 	}
 	if !strings.Contains(body, "A backup was written") {
 		t.Error("the page the reader lands on does not say a backup was written")
+	}
+	// ST-10 requires the program to say it made the folder, not merely to be
+	// allowed to make one.
+	if !strings.Contains(body, "folder did not exist, so it was made") {
+		t.Error("the page does not say the backups folder was created")
+	}
+
+	// The second backup goes into the folder that is now there, and the page
+	// does not claim to have made it again.
+	w = postFromPage(t, h, "/backup", url.Values{"return": {"/accounts/1"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("second backup = %d, want 303: %s", w.Code, w.Body.String())
+	}
+	if loc, err := url.Parse(w.Header().Get("Location")); err != nil {
+		t.Fatalf("Location: %v", err)
+	} else if loc.Query().Get("newfolder") != "" {
+		t.Error("the second backup says it created the folder again")
 	}
 }
 

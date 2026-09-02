@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.20.2-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.21.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -24,11 +24,14 @@ It can:
 - create an account, with a kind, a currency, and an opening balance
 - enter a transaction into an account, with an optional category
 - mark a transaction cleared, and mark it not cleared again
-- write a verified, timestamped backup beside the database
+- write a verified, timestamped backup into a `backups` folder beside the database
+- list the backups it can find, and replace the checkbook with one of them in a single press,
+  keeping the file it displaced
 - close the checkbook, and open another — or the same one again, or a backup, or the sample
   household — without restarting
 - open a database read-only, so a backup can be read without being altered
-- restore a backup to a new file, bringing the copy up to date and leaving the backup as it is
+- restore a backup to a file of its own, bringing the copy up to date and leaving the backup as it
+  is
 - stop the program from the browser
 
 It does not change an account once created — rename it, change its currency, close it, or remove
@@ -103,9 +106,9 @@ All records live in one SQLite file.
 
 | Property | Value |
 | --- | --- |
-| Default path | `checkbook.db` in the current directory |
+| Default path | `checkbook.db` in the current directory, made absolute at startup — so what the status bar names is a file, not a name that depends on where the program was started |
 | Created if missing | Yes |
-| Directories created | Never. A path whose parent directory does not exist is an error and nothing is written. |
+| Directories created | Only `backups`, beside the checkbook, and only when **Back up now** is pressed, and the page says so. Opening a database creates none: a path whose parent directory does not exist is an error and nothing is written. |
 | Companion files while running | `NAME-wal` and `NAME-shm`, in the same directory |
 | Companion files after a clean stop | None. Their contents are folded into the database file. |
 | Format | SQLite 3, readable by any SQLite tool |
@@ -152,12 +155,13 @@ Below the accounts, and beside every page:
 
 | Action | Effect |
 | --- | --- |
-| **Back up now** | Writes a verified copy beside the database. See [Backing up](#backing-up). Not shown for `-demo` or a read-only database. |
+| **Back up now** | Writes a verified copy into the `backups` folder beside the database. See [Backing up](#backing-up). Not shown for `-demo` or a read-only database. |
+| **Restore a backup** | Asks first, then replaces the checkbook with a backup. See [Restoring a backup](#restoring-a-backup). Not shown for `-demo`, for a read-only database, or for a build that cannot open a checkbook. |
 | **Close checkbook** | Asks first, then closes the file. See [Closing and opening a checkbook](#closing-and-opening-a-checkbook). |
 
-When the open database is a backup, a note under **Close checkbook** says that restoring is
-offered on the page you land on after closing. Restoring is not a sidebar button because it needs
-a name to write to, which is a box rather than a press.
+When the open database is a backup, **Restore a backup** is withheld — a backup is not a file this
+program replaces — and a note under **Close checkbook** says so and points at the page you land on
+after closing.
 
 **Quit** is deliberately not here. It ends the program rather than acting on the checkbook, and it
 lives on the page you land on after closing. See [Quitting](#quitting).
@@ -332,9 +336,22 @@ flag. A register on a file never does.
 
 ## Backing up
 
-**Back up now**, in the sidebar, writes a copy of the database beside it, named
-`checkbook-YYYYMMDD-HHMMSS.db` from the local clock. The register is not interrupted and the copy
-can be taken with the checkbook open.
+**Back up now**, in the sidebar, writes a copy of the database into a `backups` folder beside it,
+named `checkbook-YYYYMMDD-HHMMSS.db` from the local clock. The register is not interrupted and the
+copy can be taken with the checkbook open.
+
+```
+~/Documents/checkbook/
+    checkbook.db                            the checkbook
+    backups/
+        checkbook-20260902-141530.db        where Back up now writes
+    checkbook-20260815-100000.db            an older backup: still found, still offered, not moved
+    checkbook-replaced-20260902-153104.db   a checkbook a restore displaced
+```
+
+`backups` is the one directory this program creates. It is made on the first press if it is not
+there, and the page says that it was. Backups written by earlier releases sit beside the checkbook
+rather than inside it; they are not moved, and both places are read.
 
 The copy is made with SQLite's `VACUUM INTO`, so it is a single compacted file with no `-wal`
 beside it — routinely smaller than the database it came from. It is written under a working name
@@ -357,7 +374,8 @@ disk, or a service you already use — while you are thinking of it.
 | Condition | Result |
 | --- | --- |
 | `-demo`, or any database held in memory | Refused. There is no file to copy, and the action is not offered. |
-| The folder holding the database no longer exists | Refused. No folder is created. |
+| The folder holding the database no longer exists | Refused. Only `backups` is ever created, and only inside a folder that is already there. |
+| The `backups` folder cannot be created | Refused. No backup is written. |
 | The copy will not reopen as a checkbook | Refused, the copy deleted, and the database reported as probably damaged. |
 
 To restore one, see [Restoring a backup](#restoring-a-backup) below and
@@ -376,8 +394,9 @@ saying no checkbook is open, with status **503**. That page offers:
 
 - the name of the file that was closed, and **Back up now** for it — unless it was a backup, in
   which case the page says so and points at **Restore a backup** instead
+- **Restore a backup**: the list of copies this program can find, and below it the two boxes of
+  **Or restore to a file of its own**
 - a box to open a checkbook by path, with **Open read-only — the file cannot be changed** under it
-- **Restore a backup**, with **Restore from** and **Restore to**
 - **Open the sample household instead**
 - **Quit**
 
@@ -421,23 +440,71 @@ from a tab left open or an address typed in, is refused with status 409 and an e
 
 ## Restoring a backup
 
-**Restore a backup**, on the page shown when no checkbook is open, takes two paths: the backup to
-restore **from**, and the file to restore **to**. The second must not exist yet.
+Restoring acts on a **whole file**: you get the records that were in the backup, and the ones
+entered since it was taken are not in them. It never merges two files, and it never alters the
+backup it reads. Recovering *some* records from a backup would be an import rather than a restore,
+and is not built; see [Restore and import](../explanations/restore-and-import.md).
 
-Restoring copies the backup to that name and makes the copy an ordinary checkbook — it stamps it
-as one and brings its schema up to date if it came from an older release. The copy is written under
-a working name, opened and read back, and only then given the name you asked for; a copy that will
-not come up as a checkbook is deleted rather than left looking like one.
+There are two forms of it, and they are different operations.
 
-**The backup is not altered.** It is still a backup afterwards, and it can be restored again.
+### Replace this checkbook
 
-**Nothing is ever written over.** A restore is what you reach for after something has gone wrong,
-and the file you would be replacing is often the one that shows what went wrong. Restore to a new
-name, open it and check the balances, then move it into place yourself.
+**Restore a backup**, in the sidebar and on the page shown when no checkbook is open, lists every
+copy this program can find, newest first:
 
-Restoring and opening are two steps on purpose. Restoring makes the records usable again; opening
-puts a checkbook in front of you. After a restore, the page names the file that was written and
-fills the open box in with it, so opening it is one press.
+| Column | What it shows |
+| --- | --- |
+| Taken | The moment in the file's name, when the name is one this program wrote; otherwise the file's own modification time, marked *file date*. |
+| Size | The file's size. |
+| File | Its path relative to the checkbook's folder, so a copy in `backups/` is visibly in `backups/`. A file that is a checkbook rather than a backup is marked as one. |
+
+It reads two places — the checkbook's folder and the `backups` folder inside it — and creates
+neither. **A file is a backup because its header says so**, never because of its name: a backup you
+renamed `notes.txt` is listed, and a text file named `checkbook-20260101-000000.db` is not. The
+checkbook itself is not listed, being the file that would be replaced. Files a previous restore set
+aside — `checkbook-replaced-…` — are, since restoring one is how a restore is undone. The fifty
+most recent files are offered.
+
+Choosing one and pressing **Restore this backup** asks first (see below). Going through with it:
+
+1. copies the backup to a new file **while the checkbook is still open and serving**, so a damaged
+   backup, a full disk, or an unwritable folder is refused with the register still in front of you
+   and nothing about it changed;
+2. closes the checkbook, moves it aside as `checkbook-replaced-YYYYMMDD-HHMMSS.db` in the same
+   folder — with its `-wal` and `-shm`, which belong to it — and moves the copy into its place;
+3. opens the checkbook again and lands you on your register, with a notice naming the backup the
+   records came from and the file that was kept.
+
+The checkbook keeps its name. `checkbook.db` is still `checkbook.db`, so every bookmark, shortcut
+and `-db` flag still points at it.
+
+**Nothing is deleted.** The file that was displaced is an ordinary checkbook, not a backup, so it
+opens directly — which is a shorter way back than a file that must itself be restored.
+
+**The list is served whether or not a checkbook is open**, including when the checkbook the program
+was started on could not be opened at all. That is the case this exists for.
+
+| Condition | Result |
+| --- | --- |
+| The chosen file is not one the list just offered | Refused. Nothing is done. |
+| The page was drawn for a different checkbook from the one open now | Refused with status 409. Nothing is replaced. |
+| The backup is not a checkbook or a backup of one | Refused. The checkbook is still open and unchanged. |
+| The backup is from a newer release | Refused. The checkbook is still open and unchanged. |
+| The copy will not open as a checkbook | Refused, the copy deleted, the backup reported as probably damaged, and the checkbook still open and unchanged. |
+| The checkbook cannot be moved aside — another program has it open | Refused. Nothing is replaced, and the copy is left where the page names it. |
+| The copy cannot take the checkbook's name | The checkbook is put back exactly as it was. The copy is left, and the page names it. |
+| Neither can be put in place | Reported on its own, naming both files. Nothing is deleted; you rename one of them yourself. |
+| The restored checkbook will not open | The swap stands. The page says why and names the file that was kept, so you can open that instead. |
+| `-demo`, a read-only database, or a build with no way to open a checkbook | Withheld, with the reason on the page. |
+
+### Or restore to a file of its own
+
+Below the list, two boxes: the backup to restore **from**, and the file to restore **to**. The
+second must not exist yet. This copies the backup to that name and **replaces nothing**; you open
+the copy yourself.
+
+Use it when the file you want back is not the one you are working in, or when the backup is on
+another disk — the list reads only the checkbook's own folder.
 
 | Condition | Result |
 | --- | --- |
@@ -450,6 +517,25 @@ fills the open box in with it, so opening it is one press.
 
 A checkbook is accepted where a backup is, so this is also how you copy your records to a second
 file without leaving the browser.
+
+### Asking first
+
+Both the one-press restore and **Close checkbook** ask before acting, because both take the
+register away from every window the household has open. The confirmation names the file the
+records will come from, the file they will replace, and says that anything entered since the backup
+was taken is not in it. **Keep what I have** leaves everything as it is.
+
+The confirmation carries the checkbook it was drawn for. If another window closed or opened a
+checkbook in the meantime, pressing it is refused with status 409 rather than applied to a database
+the page was never showing.
+
+### What migration has to do with it
+
+Restoring is the **only** place this program brings an old database's schema up to date on a file
+that was not just opened for use. Opening a backup read-only refuses an older schema outright,
+because bringing it up to date would rewrite it and a backup that has been rewritten is no longer
+the backup you took. Restoring has no such problem: it migrates the *copy*, and leaves the backup
+alone. So a backup from any release this program can still migrate from is restorable, however old.
 
 ## Quitting
 
@@ -486,13 +572,15 @@ contacts GitHub.
 | `/checkbook` | The page shown when no checkbook is open. Redirects to `/` when one is. |
 | `/checkbook/close` | `GET` asks; `POST` closes. |
 | `/checkbook/open` | `POST` only. Opens a checkbook by path, read-only if asked, or the sample household. Answers with a redirect to the register. |
-| `/checkbook/restore` | `POST` only. Restores a backup to a new file and redirects back with its name. Does not open it. |
+| `/checkbook/restore` | `GET` lists the backups found. `POST` replaces the checkbook with one and reopens it, then redirects to the register. The `POST` is not served by a build that cannot open a checkbook. |
+| `/checkbook/restore/confirm` | `GET` only. Asks before replacing, carrying the checkbook the page was drawn for. |
+| `/checkbook/restore/copy` | `POST` only. Restores a backup to a new file and redirects back with its name. Replaces nothing and opens nothing. |
 | `/quit` | `GET` asks; `POST` stops the program. |
 | `/static/app.css` | The stylesheet. |
 | `/static/htmx.min.js` | The script that replaces a single row. Served from this program; nothing is fetched from the internet. |
 
-`/backup`, `/checkbook/close`, `/checkbook/open`, `/checkbook/restore` and `/quit` act on your file
-or on the program
+`/backup`, `/checkbook/close`, `/checkbook/open`, `/checkbook/restore`, `/checkbook/restore/copy`
+and `/quit` act on your file or on the program
 rather than on a record, so they accept `POST` only and are refused unless the request came from a
 page this program served. There is no login, no session, and no token: the check is the two headers
 (`Sec-Fetch-Site` and `Origin`) a browser fills in by itself, so a form on another site cannot stop
@@ -511,13 +599,15 @@ applied silently.
 
 ## When the database cannot be opened
 
-The program does not exit. It serves one page, at **every** address, reporting the problem, and
-opens the browser on it as usual. The page names the database, states what to do next, links to
-the relevant documents, and shows the underlying message.
+The program does not exit. It runs as it always does, with no checkbook open, so every address that
+does not need one still answers — most importantly **Restore a backup**, which is why the program
+is still running at all. Any address that needs a checkbook, a bookmarked register included, gets
+the page shown when none is open, and that page carries the explanation: what the database was,
+what happened, what to do next, links to the relevant documents, the underlying message, and the
+list of backups sitting beside the file that would not open.
 
-Every response is status **503** while the program is in this state, except `/static/app.css`,
-which is served normally so the page is legible. The register is not served at all; a bookmarked
-account address returns the same page.
+Those responses are status **503**. `/static/app.css` is served normally, so the page is legible.
+Once anything opens successfully the explanation stops being shown: it is no longer what is wrong.
 
 The failure is also printed to the terminal, and the startup banner reads `NOT OPENED` in place
 of the usual database line. When the program is stopped it exits with status 1.
@@ -528,6 +618,7 @@ of the usual database line. When the program is stopped it exits with status 1.
 | The file is a SQLite database this program did not create | That file is not a checkbook |
 | The directory named by `-db` does not exist | That folder does not exist |
 | The schema is behind the version this build expects | This checkbook's schema is not the one this version expects |
+| The file has bytes and is not a SQLite database at all | That file is not a checkbook |
 | Any other failure to open the file | The checkbook could not be opened |
 
 In every case the database is left as it was found.
@@ -569,13 +660,16 @@ is on screen.
 | An entry is addressed to a closed account | 409 |
 | A mark arrives without the version of the transaction it was made against | 400 |
 | A mark is refused because the transaction changed in another window | 409, or the row and a message when the page's script made the request |
-| No checkbook is open | 503, on every address |
+| No checkbook is open | 503, on every address that needs one; `/checkbook`, `/checkbook/restore` and the static files still answer |
 | A checkbook could not be opened | 422, on the page that offers to open one |
 | A close arrives for a checkbook that is no longer the one open | 409 |
 | A write arrives for a database open read-only | 409 |
 | A backup is refused because there is no file to copy | 409 |
 | A backup is named in the open box | Opened read-only, 303 to the register |
-| A restore is refused | 422 |
+| A restore is refused because the file was not one the list offered | 422 |
+| A restore is refused because the page was drawn for a different checkbook | 409 |
+| A restore is refused because the checkbook is the demo, read-only, or has no file behind it | 409 |
+| A restore was made and the files could not be moved into place | 409, or 500 when neither file is at the checkbook's name |
 | A control request did not come from a page this program served | 403 |
 
 Each of these pages states what happened and what to do next, and links back to the register.

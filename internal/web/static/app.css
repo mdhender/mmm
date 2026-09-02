@@ -329,3 +329,35 @@ main.problem .lead { margin: 0 0 1.25rem; }
 /* A note under a sidebar action, saying where the next step is rather than
    offering a button that would have nowhere to put its answer. */
 .action-note { margin: .5rem 0 0; font-size: .75rem; line-height: 1.4; }
+
+/* The list of backups a restore can be made from. A table, because the reader is
+   comparing four facts across rows -- when, how big, which file, and what kind
+   -- and a table is what that is. */
+table.backups { width: 100%; border-collapse: collapse; margin: .75rem 0 0; max-width: 56rem; }
+table.backups th {
+    text-align: left;
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+    padding: 0 .5rem .35rem;
+    border-bottom: 1px solid var(--rule);
+}
+table.backups td { padding: .35rem .5rem; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+table.backups tr:hover td { background: var(--panel); }
+table.backups label { cursor: pointer; }
+table.backups .muted { font-size: .8rem; }
+.restore-actions { margin: 1rem 0 0; }
+.restore-actions button {
+    font: inherit;
+    padding: .35rem 1.1rem;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--paper);
+    cursor: pointer;
+}
+.restore-actions button:hover { background: var(--ink); border-color: var(--ink); }
+
+/* The older restore-to-a-copy, kept below the list. It is a second offer rather
+   than a competing one, so its heading sits at the weight of a subsection. */
+.restore-copy-heading { margin-top: 2rem; }

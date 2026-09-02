@@ -109,6 +109,20 @@ func run() (browserOpened bool, err error) {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	// Made absolute here, once, for the reason browserOpener already does it for
+	// a path typed into the browser: the program may have been started from
+	// anywhere -- by double-clicking it, most of all -- and a relative path is
+	// relative to a working directory the reader cannot see. It is also what the
+	// footer shows (BK-3), and "checkbook.db" names no particular file.
+	dbAbs := *dbPath
+	if !*demo {
+		abs, err := filepath.Abs(dbAbs)
+		if err != nil {
+			return false, fmt.Errorf("%s: %w", dbAbs, err)
+		}
+		dbAbs = abs
+	}
+
 	// Refuse anything but loopback rather than trusting the flag. The register is
 	// unauthenticated by design (PL-7), which is only safe because it is
 	// unreachable from off the machine (PL-4).
@@ -145,39 +159,45 @@ func run() (browserOpened bool, err error) {
 	// not be visible at all, so the failure is served as a page in the browser
 	// that was going to be opened anyway. It is printed here too, for whoever
 	// does have a terminal.
-	var handler http.Handler
-	store, storeErr := openStore(ctx, *dbPath, *demo)
+	//
+	// The ordinary server is what serves it, with no checkbook and the failure
+	// handed over as Options.Problem. A separate handler answering every address
+	// with one static page was the old answer, and it was wrong for the reason
+	// this whole page exists: a household whose checkbook is corrupt is the one
+	// that needs the restore list, and there has to be an address to put it at.
+	store, storeErr := openStore(ctx, dbAbs, *demo)
+	var problem *web.Problem
 	if storeErr != nil {
 		fmt.Fprintf(os.Stderr, "checkbook: %v\n", storeErr)
-		handler, err = web.NewProblem(
-			web.DescribeOpenError(storeErr, databaseName(*dbPath, *demo)),
-			version.Short())
-		if err != nil {
-			return false, err
-		}
-	} else {
-		// Pool.Close blocks until every borrowed connection is returned, so this
-		// must run after the server has finished its in-flight requests. The
-		// shutdown below does that before returning.
-		//
-		// It closes the server's checkbook rather than this store, because the
-		// store the program started with may not be the one it ends with: the
-		// register can be closed and another opened from the browser.
-		ui, err := web.New(web.Options{
-			Store:   store,
-			Open:    browserOpener(log),
-			Quit:    quit,
-			Restart: restartHint(flag.CommandLine),
-			Version: version.Short(),
-			Log:     log,
-		})
-		if err != nil {
-			store.Close()
-			return false, err
-		}
-		defer ui.Close()
-		handler = ui
+		p := web.DescribeOpenError(storeErr, databaseName(dbAbs, *demo))
+		problem = &p
 	}
+
+	// Pool.Close blocks until every borrowed connection is returned, so this
+	// must run after the server has finished its in-flight requests. The
+	// shutdown below does that before returning.
+	//
+	// It closes the server's checkbook rather than this store, because the
+	// store the program started with may not be the one it ends with: the
+	// register can be closed and another opened from the browser.
+	ui, err := web.New(web.Options{
+		Store:         store,
+		Open:          browserOpener(log),
+		Quit:          quit,
+		Restart:       restartHint(flag.CommandLine),
+		CheckbookPath: checkbookPath(dbAbs, *demo),
+		Problem:       problem,
+		Version:       version.Short(),
+		Log:           log,
+	})
+	if err != nil {
+		if store != nil {
+			store.Close()
+		}
+		return false, err
+	}
+	defer ui.Close()
+	var handler http.Handler = ui
 
 	srv := &http.Server{
 		Handler: handler,
@@ -190,7 +210,7 @@ func run() (browserOpened bool, err error) {
 
 	url := "http://" + listener.Addr().String() + "/"
 	fmt.Printf("checkbook %s\n", version.Short())
-	fmt.Printf("database:  %s\n", databaseName(*dbPath, *demo))
+	fmt.Printf("database:  %s\n", databaseName(dbAbs, *demo))
 	switch {
 	case storeErr != nil:
 		fmt.Printf("           NOT OPENED -- the address below explains why\n")
@@ -248,6 +268,16 @@ func run() (browserOpened bool, err error) {
 		return browserOpened, errReported
 	}
 	return browserOpened, nil
+}
+
+// checkbookPath is the file the browser calls "the checkbook": what -db named,
+// made absolute. The demo has none -- it is held in memory and there is no file
+// a restore could put anything back at.
+func checkbookPath(path string, demo bool) string {
+	if demo {
+		return ""
+	}
+	return path
 }
 
 // databaseName is what the program calls the database in its own output. It is

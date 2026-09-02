@@ -70,14 +70,20 @@
                     </li>
                 {{end}}
             </ul>
-        {{else}}
+        {{else if .Open}}
             <p class="muted">None yet.</p>
+        {{else}}
+            {{- /* A page on the layout can be served with nothing open -- the
+                   restore list is one, deliberately, because nothing-open is the
+                   case it exists for. "None yet." would read as an empty
+                   checkbook, which is a very different thing. */ -}}
+            <p class="muted">No checkbook open.</p>
         {{end}}
         {{- /* An ordinary link, because it goes to a page. The list is beside
                every page, so this is how an account is added from anywhere. It
                is withheld from a checkbook opened read-only rather than offered
                and then refused. */ -}}
-        {{if not .ReadOnly}}
+        {{if and .Open (not .ReadOnly)}}
             <p class="add-account"><a href="/accounts/new">+ Add account</a></p>
         {{end}}
     </nav>
@@ -104,14 +110,21 @@
                 <button type="submit" class="action">Back up now</button>
             </form>
         {{end}}
+        {{- /* A link, because it goes to a page that asks first (RG-3), and
+               beside Back up now because the two are the same operation read
+               in opposite directions. Withheld for the sample household, for a
+               backup being read, and for a build that cannot open a checkbook:
+               in each of those there is no file for a restored copy to
+               replace. */ -}}
+        {{if .CanRestore}}
+            <a class="action" href="/checkbook/restore">Restore a backup</a>
+        {{end}}
         {{- /* A link, because it goes to a page that asks first (RG-3). The
                closing itself is the POST on that page. */ -}}
         <a class="action" href="/checkbook/close">Close checkbook</a>
-        {{- /* Restoring is offered on the page after closing rather than here.
-               It needs a name to write to, which is a pair of boxes and not a
-               sidebar button, and closing first is the step that decides this
-               is the backup you want. Saying where it is keeps this from being
-               a dead end (RG-4). */ -}}
+        {{- /* A backup being read cannot be the thing a restore replaces, so the
+               action is withheld and the reader is told where it is instead of
+               being left at a dead end (RG-4). */ -}}
         {{if .IsBackup}}
             <p class="muted action-note">To work from these records, close this backup. Restoring is offered on the page you land on.</p>
         {{end}}
