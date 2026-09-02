@@ -38,12 +38,15 @@
             font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
             font-variant-numeric: tabular-nums;
         }
+        /* Wrapping, not scrolling. A household path is long, and a command the
+           reader cannot see the end of is not a hint. */
         pre {
             margin: 0 0 .5rem;
             padding: .6rem .8rem;
             background: #f2efe8;
             border-left: 3px solid #1c4f7c;
-            overflow-x: auto;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
         }
         footer {

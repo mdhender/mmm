@@ -31,7 +31,7 @@ func noticeFor(r *http.Request) string {
 		return ""
 	}
 	return "A backup was written beside your checkbook, as " + name +
-		". It was reopened and read back as a checkbook before being named, so it is a copy you can restore from. Copy it somewhere else -- another disk, or a service you already use -- while you are thinking of it."
+		". It was reopened and read back as a checkbook before being named, so it is a copy you can restore from. Copy it somewhere else — another disk, or a service you already use — while you are thinking of it."
 }
 
 // validBackupName reports whether name is one this program wrote: the exact
