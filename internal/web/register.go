@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/mdhender/mmm/internal/account"
+	"github.com/mdhender/mmm/internal/category"
 	"github.com/mdhender/mmm/internal/transaction"
 )
 
@@ -37,6 +38,12 @@ type registerPage struct {
 	// FormError is shown above the form. It is empty on a register nobody has
 	// just tried to write to.
 	FormError string
+
+	// Categories are the names already in use, offered to the category box as
+	// suggestions. The box still takes anything typed: this is what stops a
+	// slip creating "Grocerys" beside "Groceries", not a restriction on what a
+	// category may be called.
+	Categories []string
 }
 
 // registerRow is one line of the register.
@@ -137,6 +144,19 @@ func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status i
 		return
 	}
 
+	// The suggestions are a convenience, so a failure to read them is not worth
+	// refusing a register the reader can otherwise use. It is logged and the box
+	// simply offers nothing; anything genuinely wrong with the database has
+	// already failed LoadRegister above.
+	categories, err := category.List(r.Context(), s.store)
+	if err != nil {
+		s.log.Error("list categories", "err", err)
+	}
+	names := make([]string, 0, len(categories))
+	for _, c := range categories {
+		names = append(names, c.Name)
+	}
+
 	page := buildRegisterPage(layout{
 		Title:    acct.Name,
 		Database: s.store.Path(),
@@ -146,6 +166,7 @@ func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status i
 	}, reg)
 	page.Form = form
 	page.FormError = formError
+	page.Categories = names
 
 	s.render(w, r, status, "register.gohtml", page)
 }

@@ -275,6 +275,42 @@ func TestEntryFormOnEmptyRegister(t *testing.T) {
 	}
 }
 
+// TestCategoryBoxSuggestsExistingNames: the box takes anything, and offers what
+// is already there, so a slip does not file the same spending under a second
+// spelling of a category that already exists.
+func TestCategoryBoxSuggestsExistingNames(t *testing.T) {
+	store := open(t)
+	seed(t, store) // seeds "Groceries" and "Household"
+
+	body := get(t, server(t, store), "/accounts/1").Body.String()
+	if !strings.Contains(body, `list="category-names"`) {
+		t.Error("the category box offers no suggestions")
+	}
+	for _, want := range []string{
+		`<datalist id="category-names">`,
+		`<option value="Groceries">`,
+		`<option value="Household">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page is missing %s", want)
+		}
+	}
+
+	// Suggesting is not restricting: a name nobody has used yet still writes.
+	form := entryValues()
+	form.Set("category", "Wine")
+	if w := post(t, server(t, store), "/accounts/1/transactions", form); w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: a new category was refused", w.Code)
+	}
+	categories, err := category.List(t.Context(), store)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(categories) != 3 {
+		t.Errorf("categories = %d, want 3", len(categories))
+	}
+}
+
 // TestEntryDateDefaultsToToday saves the common case a keystroke, and must be a
 // calendar date rather than anything carrying a timezone (ST-8).
 func TestEntryDateDefaultsToToday(t *testing.T) {

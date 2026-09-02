@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.11.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.11.1-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -39,7 +39,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.11.0-beta
+checkbook 0.11.1-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -202,7 +202,7 @@ does not accept entries.
 | Date | Yes | A calendar date, `YYYY-MM-DD`. Defaults to today. |
 | Num | No | Check number. |
 | Payee | Yes | |
-| Category | No | Blank records no category, and the row reads `Uncategorized`. |
+| Category | No | Blank records no category, and the row reads `Uncategorized`. The categories already in use are offered as suggestions. |
 | Memo | No | |
 | Payment | One of the two | Money leaving the account. |
 | Deposit | One of the two | Money arriving in the account. |
@@ -212,9 +212,13 @@ recorded as negative, and one under Deposit as positive. Filling both, or neithe
 amount more precise than the account's currency — a third decimal place in USD — is refused rather
 than rounded.
 
+The category box lists the categories already in use, in name order, and the browser narrows the
+list as you type. The list suggests without restricting: any name can still be typed, and one that
+does not exist yet is created.
+
 A category name that already exists is reused, regardless of case: typing `groceries` when
 `Groceries` exists files the transaction under the existing category and does not create a second
-one. The stored spelling is not changed. A name that does not exist is created.
+one. The stored spelling is not changed.
 
 A new transaction is always **uncleared**. Marking it cleared is not available in this release.
 

@@ -95,7 +95,7 @@
             </label>
             <label class="f-category">Category
                 <input type="text" name="category" value="{{.Form.Category}}"
-                       placeholder="Uncategorized">
+                       list="category-names" autocomplete="off" placeholder="Uncategorized">
             </label>
             <label class="f-memo">Memo
                 <input type="text" name="memo" value="{{.Form.Memo}}">
@@ -113,6 +113,14 @@
             <div class="f-add">
                 <button type="submit">Add</button>
             </div>
+
+            {{- /* The categories already in use. A datalist suggests without
+                   restricting, so a new category is still one keystroke away
+                   while a slip that would file this month's shopping under a
+                   second spelling of "Groceries" is not. */ -}}
+            <datalist id="category-names">
+                {{range .Categories}}<option value="{{.}}"></option>{{end}}
+            </datalist>
         </div>
         <p class="muted entry-note">
             Amounts are in {{.Currency}}, without a sign. A new entry is uncleared until the bank shows it.
