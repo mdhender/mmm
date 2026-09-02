@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.20.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.20.1-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -375,7 +375,8 @@ saying no checkbook is open, with status **503**. That page offers:
 
 - the name of the file that was closed, and **Back up now** for it — unless it was a backup, in
   which case the page says so and points at **Restore a backup** instead
-- a box to open a checkbook by path, with **Open read-only** beside it
+- a box to open a checkbook by path, with **Open read-only — nothing is written to the file**
+  under it
 - **Restore a backup**, with **Restore from** and **Restore to**
 - **Open the sample household instead**
 - **Quit**
@@ -392,9 +393,10 @@ what it wanted to hear.
 
 ## Opening a backup read-only
 
-Tick **Open read-only** to look at a backup. For a backup this is not a precaution but the only
-way in: opening one without the box ticked is refused, and the page says so and offers the two
-things you can do instead.
+Tick **Open read-only** to look at a backup. The box says what it does rather than what the file
+is: nothing is written to it. A backup opens this way and no other — opening one without the box
+ticked is refused, and the page says so and offers the two things you can do instead. An ordinary
+checkbook opens either way, so the box is also how you read one without risking a change to it.
 
 Opening a database normally brings its schema up to date, so opening an older backup that way
 would rewrite it — and a backup that has been rewritten is no longer the backup you took. A

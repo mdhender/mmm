@@ -97,7 +97,7 @@ func DescribeOpenError(err error, database string) Problem {
 		// again" would be an instruction the reader cannot follow.
 		p.Steps = []string{
 			"Open your checkbook instead — the file you keep your records in, rather than one of the copies beside it. Backups are named checkbook-YYYYMMDD-HHMMSS.db, for the moment they were taken.",
-			"To look at this one, open it read-only. There is a box for that beside the path, and reading a backup changes nothing: it is how you check a backup is the one you want before you use it.",
+			"To look at this one, open it read-only. There is a box for that under the path, and reading a backup changes nothing: it is how you check a backup is the one you want before you use it.",
 			"To work from these records, restore it. Restoring copies the backup to a new file and brings the copy up to date, and the backup itself is left exactly as it is.",
 			"Nothing was written. A backup opened for writing stops being the copy that was taken, so the program will not do it.",
 		}

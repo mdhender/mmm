@@ -105,8 +105,8 @@ func TestReadOnlyRefusesAWriteThatArrivesAnyway(t *testing.T) {
 	}
 }
 
-// TestReadOnlyIsOfferedOnTheOpenForm. The program cannot tell a backup from a
-// checkbook by looking at one, so the reader says which this is.
+// TestReadOnlyIsOfferedOnTheOpenForm. The box is what the reader ticks to look
+// at a backup, so it has to be on the form and has to say what it does.
 func TestReadOnlyIsOfferedOnTheOpenForm(t *testing.T) {
 	store := open(t)
 	h := newServer(t, webOptionsWithOpener(t, store))
@@ -118,7 +118,10 @@ func TestReadOnlyIsOfferedOnTheOpenForm(t *testing.T) {
 	if !strings.Contains(body, `name="readonly"`) {
 		t.Error("the open form does not offer to open a backup read-only")
 	}
-	if !strings.Contains(body, "for looking at a backup") {
-		t.Error("the read-only box does not say what it is for")
+	if !strings.Contains(body, "nothing is written to the file") {
+		t.Error("the read-only box does not say what it does")
+	}
+	if !strings.Contains(body, "A backup opens read-only and no other") {
+		t.Error("the open form does not say a backup opens only read-only")
 	}
 }
