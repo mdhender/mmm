@@ -85,6 +85,11 @@ type registerRow struct {
 	// the register does not rewrite it (RC-3).
 	Reconciled bool
 
+	// ReadOnly carries the frame's own flag down to the row, because a row is
+	// also rendered on its own -- as the answer to marking one cleared -- where
+	// there is no layout to read it from.
+	ReadOnly bool
+
 	// NextStatus is what the control sets, and ActionLabel names it. The mark is
 	// a toggle, so both flip with the row's current status.
 	NextStatus  string
@@ -210,14 +215,14 @@ func buildRegisterPage(l layout, reg transaction.Register) registerPage {
 	}
 
 	for _, e := range reg.Entries {
-		page.Rows = append(page.Rows, buildRegisterRow(reg.Account, e))
+		page.Rows = append(page.Rows, buildRegisterRow(reg.Account, e, l.ReadOnly))
 	}
 	return page
 }
 
 // buildRegisterRow formats one entry. It is its own function because a single
 // row is also rendered on its own, as the answer to marking one cleared.
-func buildRegisterRow(acct account.Account, e transaction.Entry) registerRow {
+func buildRegisterRow(acct account.Account, e transaction.Entry, readOnly bool) registerRow {
 	row := registerRow{
 		ID:              e.ID,
 		AccountID:       acct.ID,
@@ -235,6 +240,7 @@ func buildRegisterRow(acct account.Account, e transaction.Entry) registerRow {
 		StatusLabel:     statusLabel(e.Status),
 		Token:           storage.FormatTime(e.UpdatedAt),
 		Reconciled:      e.Status == transaction.Reconciled,
+		ReadOnly:        readOnly,
 	}
 
 	// The control offers the other state, so the label says what pressing it

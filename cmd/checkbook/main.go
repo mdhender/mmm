@@ -266,8 +266,17 @@ func browserOpener(log *slog.Logger) web.Opener {
 			}
 			path = abs
 		}
-		log.Info("opening a checkbook", "path", path, "demo", req.Demo)
-		return openStore(ctx, path, req.Demo)
+		log.Info("opening a checkbook", "path", path, "demo", req.Demo, "readonly", req.ReadOnly)
+		if req.Demo {
+			return openStore(ctx, path, true)
+		}
+		if req.ReadOnly {
+			// A backup opened read-write is no longer a backup: Open migrates on
+			// open, so merely looking at an older copy would rewrite the thing
+			// that was kept.
+			return storage.OpenReadOnly(ctx, path)
+		}
+		return openStore(ctx, path, false)
 	}
 }
 

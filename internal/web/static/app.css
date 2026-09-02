@@ -18,6 +18,12 @@
     --temporary: #8a5000;
     --temporary-panel: #f7ecd4;
     --temporary-rule: #d8a13a;
+    /* A backup opened read-only: slate, so it is not mistaken for the amber
+       that means "nothing here is saved". Nothing here changes, which is a
+       different thing and a reassuring one. */
+    --locked: #3a4a5c;
+    --locked-panel: #e8ecf1;
+    --locked-rule: #93a5b8;
 }
 
 * { box-sizing: border-box; }
@@ -59,6 +65,23 @@ a { color: var(--accent); }
 }
 .ephemeral .statusbar code { color: var(--temporary); }
 .statusbar .temporary-mark { font-size: .9rem; }
+
+/* A checkbook opened read-only -- a backup being looked at. Marked like the
+   demo, in slate rather than amber: it is not temporary, it is fixed. */
+.readonly .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--locked-panel);
+    border-bottom-color: var(--locked-rule);
+}
+.topbar .locked { color: var(--locked); font-size: .8rem; font-weight: 600; }
+.readonly .statusbar {
+    background: var(--locked-panel);
+    border-top-color: var(--locked-rule);
+    color: var(--locked);
+}
+.readonly .statusbar code { color: var(--locked); }
 
 /* Default stretch alignment, so the divider beside the account list runs the
    full height of the window rather than stopping under the last account. */
@@ -218,6 +241,18 @@ td.memo, td.payee, td.category { overflow-wrap: anywhere; }
 .f-payee input, .f-category input, .f-memo input { width: 11rem; }
 .f-name input { width: 14rem; }
 .f-path input { width: 26rem; max-width: 100%; }
+
+/* A checkbox reads left to right, unlike the stacked label-over-box of every
+   other field. */
+.entry-fields label.checkbox {
+    flex-direction: row;
+    align-items: center;
+    gap: .4rem;
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: .85rem;
+    color: var(--ink);
+}
 .f-opening input { width: 9rem; }
 
 /* The new-account form is a page of its own rather than a strip under a table,

@@ -46,6 +46,12 @@
            page to swap and a full re-render is the honest answer. The POST
            redirects, which is what stops a reload entering the same
            transaction twice (SC-4). */ -}}
+    {{if .ReadOnly}}
+        <p class="entry muted">
+            This checkbook is open for reading only, so there is no entry form. Close it and open
+            your own checkbook to record something, or copy this file and open the copy.
+        </p>
+    {{else}}
     <form class="entry" method="post" action="/accounts/{{.Account.ID}}/transactions">
         <h2>Add a transaction</h2>
 
@@ -99,6 +105,7 @@
             Amounts are in {{.Currency}}, without a sign. A new entry is uncleared until the bank shows it.
         </p>
     </form>
+    {{end}}
 {{end}}
 
 {{- /* One register row. It is a template of its own because marking a
@@ -115,7 +122,9 @@
         <td class="memo">{{.Memo}}</td>
         <td class="money{{if .AmountNegative}} negative{{end}}">{{.Amount}}</td>
         <td class="status" title="{{.StatusLabel}}">
-            {{if .Reconciled}}
+            {{- /* No control on a read-only register either: the mark is a
+                   write, and a write that can only be refused is not offered. */ -}}
+            {{if or .Reconciled .ReadOnly}}
                 {{- /* No control: a finished reconciliation is a fact, and the
                        register does not rewrite it (RC-3). */ -}}
                 {{.StatusMark}}

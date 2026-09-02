@@ -379,3 +379,10 @@ func TestTheDemoCanBeOpenedTwice(t *testing.T) {
 		}
 	}
 }
+
+// webOptionsWithOpener is the shape most control-route tests want: a store to
+// start from and an opener that hands back in-memory checkbooks.
+func webOptionsWithOpener(t *testing.T, store *storage.Store) web.Options {
+	t.Helper()
+	return web.Options{Store: store, Open: memoryOpener(t)}
+}

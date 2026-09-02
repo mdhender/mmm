@@ -39,6 +39,11 @@ type OpenRequest struct {
 	// Path is the database file. It is ignored when Demo is set.
 	Path string
 
+	// ReadOnly asks for a database that cannot be written to, which is how a
+	// backup is opened. The program cannot tell a backup from a checkbook by
+	// looking at it, and should not guess, so this is the reader's to say.
+	ReadOnly bool
+
 	// Demo asks for the sample household, held in memory.
 	Demo bool
 }
@@ -181,13 +186,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.withCheckbook(s.handleRoot))
 	// More specific than /accounts/{id}, so ServeMux prefers it and an account
 	// can never be numbered "new".
-	s.mux.HandleFunc("GET /accounts/new", s.withCheckbook(s.handleNewAccount))
-	s.mux.HandleFunc("POST /accounts", s.withCheckbook(s.handleCreateAccount))
+	// The four routes that write go through withWritableCheckbook, which refuses
+	// a checkbook opened read-only. The new-account form is one of them: a form
+	// that can only be refused is not an offer worth making.
+	s.mux.HandleFunc("GET /accounts/new", s.withWritableCheckbook(s.handleNewAccount))
+	s.mux.HandleFunc("POST /accounts", s.withWritableCheckbook(s.handleCreateAccount))
 	s.mux.HandleFunc("GET /accounts/{id}", s.withCheckbook(s.handleRegister))
 	// The entry has its own address rather than a POST to the register's, so an
 	// unmatched method on a register URL still gets a 405 from the mux.
-	s.mux.HandleFunc("POST /accounts/{id}/transactions", s.withCheckbook(s.handleCreateTransaction))
-	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}/status", s.withCheckbook(s.handleSetStatus))
+	s.mux.HandleFunc("POST /accounts/{id}/transactions", s.withWritableCheckbook(s.handleCreateTransaction))
+	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}/status", s.withWritableCheckbook(s.handleSetStatus))
 
 	// The control routes. They act on the file or on the program rather than on
 	// a record, so they are POST only and go through the same-origin check in
@@ -308,6 +316,12 @@ type layout struct {
 	// they press.
 	Notice string
 
+	// ReadOnly marks a database opened for reading only -- a backup being looked
+	// at. Like Ephemeral it is a property of the database rather than of a flag,
+	// and it is in the frame because every page has to say so: a register that
+	// cannot be written to looks exactly like one that can until somebody tries.
+	ReadOnly bool
+
 	// Ephemeral marks a database held in memory -- the sample household -demo
 	// serves. Every page says so, because a register that keeps nothing looks
 	// exactly like one that does, and somebody entering real transactions into
@@ -333,6 +347,7 @@ func (s *Server) pageLayout(r *http.Request, cb *checkbook, title string, accoun
 	if cb != nil {
 		l.Database = cb.path
 		l.Ephemeral = cb.inMemory
+		l.ReadOnly = cb.readOnly
 		l.Generation = cb.gen
 		l.Open = true
 	}

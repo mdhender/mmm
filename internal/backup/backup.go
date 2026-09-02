@@ -165,19 +165,43 @@ func vacuumInto(ctx context.Context, src, dest string) error {
 	return nil
 }
 
-// verify reopens the copy as a checkbook.
+// verify reopens the copy as a checkbook and reads it back (BK-5).
 //
-// storage.Open is the same code the program opens the household's records with,
-// so this answers the question a backup exists to answer: will this file open
-// when it is needed. It brings the copy's journal mode into line with an ordinary
-// checkbook as a side effect, which is what a restored file would be anyway.
+// Read-only, and deliberately so. storage.Open would migrate the copy and
+// convert it to WAL, which would leave the backup differing from what VACUUM
+// INTO wrote before it had ever been used -- and the point of a backup is that
+// it is the thing that was taken. OpenReadOnly makes the same checks that
+// matter here: that it is a SQLite database, that its application_id says it is
+// one of ours, and that its schema is the one this build understands.
+//
+// A quick_check on top is what turns "it opened" into "it is usable". It reads
+// the structure of every table and index, which is the difference between a file
+// that has a valid header and a file that has the household's records in it.
 func verify(ctx context.Context, path string) error {
-	store, err := storage.Open(ctx, path)
+	store, err := storage.OpenReadOnly(ctx, path)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrNotVerified, err)
 	}
-	if err := store.Close(); err != nil {
+	defer func() { _ = store.Close() }()
+
+	conn, err := store.Conn(ctx)
+	if err != nil {
 		return fmt.Errorf("%w: %v", ErrNotVerified, err)
+	}
+	defer store.Put(conn)
+
+	var result string
+	err = sqlitex.ExecuteTransient(conn, `PRAGMA quick_check;`, &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			result = stmt.ColumnText(0)
+			return nil
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNotVerified, err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("%w: %s", ErrNotVerified, result)
 	}
 	return nil
 }

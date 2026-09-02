@@ -90,6 +90,14 @@
                     <input type="text" name="path" value="{{.Path}}"
                            autocomplete="off" spellcheck="false" placeholder="checkbook.db" autofocus>
                 </label>
+                {{- /* The program cannot tell a backup from a checkbook by
+                       looking at one, and should not guess, so this is the
+                       reader's to say. Read-only never migrates, which is what
+                       makes looking at an older copy safe. */ -}}
+                <label class="f-readonly checkbox">
+                    <input type="checkbox" name="readonly" value="1"{{if .ReadOnly}} checked{{end}}>
+                    Open read-only &mdash; for looking at a backup
+                </label>
                 <div class="f-add">
                     <button type="submit">Open</button>
                 </div>

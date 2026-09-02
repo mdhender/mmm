@@ -44,9 +44,11 @@ type noCheckbookPage struct {
 	// Notice reports something that went right: a backup written.
 	Notice string
 
-	// Path is what was last typed into the open box, so a refused path comes
-	// back with the reader's work still in it.
-	Path string
+	// Path is what was last typed into the open box, and ReadOnly whether the
+	// box beside it was ticked, so a refused attempt comes back with the
+	// reader's work still in it.
+	Path     string
+	ReadOnly bool
 }
 
 // handleCheckbook shows the checkbook page.
@@ -65,16 +67,16 @@ func (s *Server) handleCheckbook(w http.ResponseWriter, r *http.Request) {
 // renderNoCheckbook writes the page, with message shown above the form when
 // something was refused.
 func (s *Server) renderNoCheckbook(w http.ResponseWriter, r *http.Request, status int, message string) {
-	s.renderNoCheckbookPage(w, r, status, message, nil, "")
+	s.renderNoCheckbookPage(w, r, status, message, nil, OpenRequest{})
 }
 
 // renderOpenFailed writes the page carrying DescribeOpenError's account of why a
 // checkbook would not open, and the path that was tried.
-func (s *Server) renderOpenFailed(w http.ResponseWriter, r *http.Request, status int, p Problem, path string) {
-	s.renderNoCheckbookPage(w, r, status, "", &p, path)
+func (s *Server) renderOpenFailed(w http.ResponseWriter, r *http.Request, status int, p Problem, req OpenRequest) {
+	s.renderNoCheckbookPage(w, r, status, "", &p, req)
 }
 
-func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, status int, message string, problem *Problem, path string) {
+func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, status int, message string, problem *Problem, req OpenRequest) {
 	closed, inMemory := s.closedCheckbook()
 
 	page := noCheckbookPage{
@@ -86,7 +88,8 @@ func (s *Server) renderNoCheckbookPage(w http.ResponseWriter, r *http.Request, s
 		Problem:  problem,
 		Message:  message,
 		Notice:   noticeFor(r),
-		Path:     path,
+		Path:     req.Path,
+		ReadOnly: req.ReadOnly,
 	}
 	if page.Path == "" && !inMemory {
 		// The obvious thing to open is the one just closed, so the box opens on
@@ -190,8 +193,9 @@ func (s *Server) handleOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := OpenRequest{
-		Path: strings.TrimSpace(r.PostForm.Get("path")),
-		Demo: r.PostForm.Get("demo") != "",
+		Path:     strings.TrimSpace(r.PostForm.Get("path")),
+		Demo:     r.PostForm.Get("demo") != "",
+		ReadOnly: r.PostForm.Get("readonly") != "",
 	}
 	if !req.Demo && req.Path == "" {
 		s.renderNoCheckbook(w, r, http.StatusUnprocessableEntity,
@@ -260,5 +264,5 @@ func (s *Server) openFailed(w http.ResponseWriter, r *http.Request, req OpenRequ
 	if req.Demo {
 		name = "the sample household"
 	}
-	s.renderOpenFailed(w, r, http.StatusUnprocessableEntity, DescribeOpenError(err, name), req.Path)
+	s.renderOpenFailed(w, r, http.StatusUnprocessableEntity, DescribeOpenError(err, name), req)
 }

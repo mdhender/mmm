@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
@@ -54,6 +55,16 @@ const (
 	// ErrSchemaVersion is returned when the schema is not at the version this
 	// program expects and is not simply newer.
 	ErrSchemaVersion = cerrs.Error("unexpected schema version")
+
+	// ErrMissingFile is returned when the database to be opened read-only is not
+	// there. Read-only never creates one: a mistyped path is reported, not built.
+	ErrMissingFile = cerrs.Error("database file does not exist")
+
+	// ErrDatabaseTooOld is returned by OpenReadOnly when the database carries a
+	// schema from an older release. It is not an error for Open, which migrates
+	// it; read-only is where it has nowhere to go, because bringing it up to
+	// date is a write and a backup that has been rewritten is not a backup.
+	ErrDatabaseTooOld = cerrs.Error("database was written by an older version of the program")
 )
 
 // PoolSize is the number of connections the store keeps open.
@@ -64,6 +75,18 @@ const (
 // connection a caller can be handed.
 const PoolSize = 10
 
+// pool is the connection pool behind a Store.
+//
+// It is an interface with three methods because a Store is opened two ways: a
+// sqlitemigration.Pool, which brings the schema up to date, and a plain
+// sqlitex.Pool opened read-only, which must not. Both carry exactly these three,
+// so nothing else in this package changes shape.
+type pool interface {
+	Take(ctx context.Context) (*sqlite.Conn, error)
+	Put(conn *sqlite.Conn)
+	Close() error
+}
+
 // Store is a migrated checkbook database.
 //
 // A Store is safe for concurrent use: callers borrow a connection with Conn and
@@ -71,7 +94,16 @@ const PoolSize = 10
 type Store struct {
 	path     string
 	inMemory bool
-	pool     *sqlitemigration.Pool
+	readOnly bool
+	pool     pool
+
+	// closeOnce makes Close idempotent. The two pools disagree about a second
+	// Close -- sqlitemigration returns "already closed", sqlitex panics on a
+	// channel it has already shut -- and the program can genuinely reach it
+	// twice, because the command defers a close and the browser's Close
+	// checkbook does one of its own.
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // Open opens the database at path, creating it if it does not exist, and brings
@@ -148,12 +180,95 @@ func OpenMemory(ctx context.Context, name string) (*Store, error) {
 	return open(ctx, uri, ":memory:"+name, PoolSize, true)
 }
 
+// OpenReadOnly opens the database at path without migrating it and without ever
+// writing to it.
+//
+// This is how a backup is looked at. Open migrates on open, so merely opening an
+// older copy to see what is in it would rewrite the artifact -- and a backup that
+// has been rewritten is not the backup that was taken. A database from an older
+// release is therefore refused here with ErrDatabaseTooOld rather than brought
+// up to date; the way forward is to copy it and open the copy read-write.
+//
+// Note the absence of OpenCreate in the flags: a path that does not exist fails
+// instead of quietly becoming an empty database.
+func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
+	if path == "" {
+		return nil, ErrMissingPath
+	}
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return nil, fmt.Errorf("%s: %w", path, ErrMissingFile)
+	}
+
+	// OpenURI is deliberately absent too: path is a filesystem path, and a "?"
+	// in a folder name must stay part of the name rather than becoming a
+	// parameter.
+	p, err := sqlitex.NewPool(path, sqlitex.PoolOptions{
+		Flags:       sqlite.OpenReadOnly,
+		PoolSize:    PoolSize,
+		PrepareConn: prepareConnFunc(false, true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	store := &Store{path: path, readOnly: true, pool: p}
+
+	// Borrowing a connection is what runs prepareConn and reports anything wrong
+	// with the file, so a failure surfaces here rather than at the first query.
+	conn, err := store.Conn(ctx)
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("%s: %w", path, classifyOpenError(err))
+	}
+	appID, aerr := pragmaInt(conn, `PRAGMA application_id;`)
+	schemaVersion, verr := pragmaInt(conn, `PRAGMA user_version;`)
+	store.Put(conn)
+
+	for _, err := range []error{aerr, verr} {
+		if err != nil {
+			p.Close()
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	// sqlitemigration does this for a read-write open. Read-only never reaches
+	// it, so the guard that stops the program reading an unrelated SQLite file
+	// as a checkbook has to be made here.
+	if int32(appID) != AppID {
+		p.Close()
+		return nil, fmt.Errorf("%s: %w: application_id is %d, not %d", path, ErrNotCheckbook, appID, AppID)
+	}
+	if err := checkReadOnlySchemaVersion(schemaVersion); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return store, nil
+}
+
+// checkReadOnlySchemaVersion compares a read-only database's user_version
+// against the number of migrations this build carries.
+//
+// Older is refused rather than migrated, which is the whole point of opening
+// read-only. Newer is refused for the reason it always is: this build has never
+// seen that schema, and the first symptom would be a wrong answer.
+func checkReadOnlySchemaVersion(schemaVersion int64) error {
+	want := int64(MigrationCount())
+	switch {
+	case schemaVersion > want:
+		return fmt.Errorf("%w: database is at schema %d, this program understands %d",
+			ErrDatabaseTooNew, schemaVersion, want)
+	case schemaVersion < want:
+		return fmt.Errorf("%w: database is at schema %d, this program expects %d",
+			ErrDatabaseTooOld, schemaVersion, want)
+	}
+	return nil
+}
+
 // open builds a Store over uri. displayPath is what Path reports, poolSize is the
 // number of connections, and inMemory relaxes the WAL requirement.
 func open(ctx context.Context, uri, displayPath string, poolSize int, inMemory bool) (*Store, error) {
 	pool := sqlitemigration.NewPool(uri, schema, sqlitemigration.Options{
 		PoolSize:    poolSize,
-		PrepareConn: prepareConnFunc(inMemory),
+		PrepareConn: prepareConnFunc(inMemory, false),
 		// Flags is deliberately left zero. sqlitex then applies its defaults,
 		// which include sqlite.OpenWAL. Setting Flags here without repeating
 		// OpenWAL would silently drop WAL; prepareConn verifies it regardless.
@@ -265,21 +380,36 @@ func (s *Store) Path() string { return s.path }
 // true however the Store was opened.
 func (s *Store) IsMemory() bool { return s.inMemory }
 
+// ReadOnly reports whether the database was opened without the ability to write
+// to it, which is how a backup is looked at.
+//
+// The interface shows this the way it shows IsMemory, and for the same reason: a
+// register that cannot be written to looks exactly like one that can until
+// somebody tries. Every write action is withheld rather than offered and then
+// refused.
+func (s *Store) ReadOnly() bool { return s.readOnly }
+
 // Conn borrows a connection from the pool. The caller must return it with Put,
 // conventionally via defer.
 func (s *Store) Conn(ctx context.Context) (*sqlite.Conn, error) {
-	return s.pool.Get(ctx)
+	return s.pool.Take(ctx)
 }
 
 // Put returns a connection borrowed from Conn.
 func (s *Store) Put(conn *sqlite.Conn) { s.pool.Put(conn) }
 
 // Close releases every connection in the pool.
-func (s *Store) Close() error { return s.pool.Close() }
+//
+// It is safe to call more than once: the second and later calls report what the
+// first one did, rather than reaching a pool that has already been shut.
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() { s.closeErr = s.pool.Close() })
+	return s.closeErr
+}
 
 // prepareConnFunc builds the pool's connection setup hook.
-func prepareConnFunc(inMemory bool) func(*sqlite.Conn) error {
-	return func(conn *sqlite.Conn) error { return prepareConn(conn, inMemory) }
+func prepareConnFunc(inMemory, readOnly bool) func(*sqlite.Conn) error {
+	return func(conn *sqlite.Conn) error { return prepareConn(conn, inMemory, readOnly) }
 }
 
 // prepareConn configures a connection and refuses to hand back one that is
@@ -292,7 +422,7 @@ func prepareConnFunc(inMemory bool) func(*sqlite.Conn) error {
 // Both settings are verified rather than merely requested. A pragma that does
 // not take effect is silent -- foreign keys would simply stop being enforced --
 // and that is exactly the class of failure the register cannot afford.
-func prepareConn(conn *sqlite.Conn, inMemory bool) error {
+func prepareConn(conn *sqlite.Conn, inMemory, readOnly bool) error {
 	// SQLite defaults foreign key enforcement to OFF, per connection. The
 	// REFERENCES clauses in the schema are inert without this, which would let
 	// splits outlive the transaction they belong to.
@@ -302,7 +432,11 @@ func prepareConn(conn *sqlite.Conn, inMemory bool) error {
 	// WAL lets a tab keep reading the register while another writes. It is a
 	// persistent property of the file, so this is a no-op after the first
 	// connection converts it. In-memory databases do not support it at all.
-	if !inMemory {
+	//
+	// A read-only connection cannot set it and must not: the journal mode is a
+	// property of the file, and changing it would be writing to the backup this
+	// connection exists to avoid writing to.
+	if !inMemory && !readOnly {
 		if err := sqlitex.ExecuteTransient(conn, `PRAGMA journal_mode = WAL;`, nil); err != nil {
 			return fmt.Errorf("enable WAL: %w", err)
 		}
@@ -317,8 +451,10 @@ func prepareConn(conn *sqlite.Conn, inMemory bool) error {
 	}
 
 	// Foreign keys are checked for every store; WAL only where it is possible,
-	// so that an in-memory test still exercises the same constraint behavior.
-	if !inMemory {
+	// so that an in-memory test still exercises the same constraint behavior. A
+	// read-only connection reports whatever the file itself says -- "delete" for
+	// anything VACUUM INTO produced -- and that is not a misconfiguration.
+	if !inMemory && !readOnly {
 		mode, err := pragmaText(conn, `PRAGMA journal_mode;`)
 		if err != nil {
 			return err

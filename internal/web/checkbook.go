@@ -36,6 +36,7 @@ type checkbook struct {
 	store    *storage.Store
 	path     string
 	inMemory bool
+	readOnly bool
 
 	// gen distinguishes this checkbook from any other opened in this run, so a
 	// button pressed in a tab that has been on screen since before a swap is
@@ -88,6 +89,7 @@ func (s *Server) adopt(store *storage.Store) (*checkbook, *checkbook) {
 		store:    store,
 		path:     store.Path(),
 		inMemory: store.IsMemory(),
+		readOnly: store.ReadOnly(),
 		gen:      s.gen,
 	}
 	previous := s.current
@@ -196,6 +198,26 @@ func (s *Server) dbFailed(w http.ResponseWriter, r *http.Request, cb *checkbook,
 // forgotten call as a nil dereference inside the pool -- a blank 500 and a stack
 // trace nobody reads -- and this makes the same mistake a compile error.
 type checkbookHandler func(http.ResponseWriter, *http.Request, *checkbook)
+
+// withWritableCheckbook is withCheckbook for a route that writes.
+//
+// A read-only checkbook is a backup being looked at, and every write action is
+// withheld from the pages rather than offered and then refused. This is the
+// other half of that: a request that arrives anyway -- a tab left open from
+// before, a typed address, a bookmarked form -- gets a written explanation
+// rather than SQLite's "attempt to write a readonly database" (RG-4).
+func (s *Server) withWritableCheckbook(h checkbookHandler) http.HandlerFunc {
+	return s.withCheckbook(func(w http.ResponseWriter, r *http.Request, cb *checkbook) {
+		if cb.readOnly {
+			s.fail(w, r, cb, http.StatusConflict, s.accountList(r, cb),
+				"This checkbook is open for reading only",
+				cb.path+" was opened read-only, which is how a backup is looked at without being changed. Nothing was written.",
+				"To make changes, close this and open the checkbook you keep your records in. To work from this file, close it, copy it, and open the copy without the read-only box ticked.")
+			return
+		}
+		h(w, r, cb)
+	})
+}
 
 // withCheckbook leases the current checkbook for the length of one request, or
 // answers the no-checkbook page if there is none.

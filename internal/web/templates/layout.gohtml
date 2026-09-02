@@ -23,7 +23,7 @@
            it fails to load, the same form posts and the page reloads. */ -}}
     <script src="/static/htmx.min.js" defer></script>
 </head>
-<body{{if .Ephemeral}} class="ephemeral"{{end}}>
+<body{{if .Ephemeral}} class="ephemeral"{{else if .ReadOnly}} class="readonly"{{end}}>
 {{- /* A database held in memory is marked wherever the frame is: at the top,
        where somebody about to type looks, and at the bottom beside the path,
        where they look to see which file they are editing. A register that keeps
@@ -34,6 +34,13 @@
     {{if .Ephemeral}}
         <span class="temporary" title="Sample data held in memory. It is discarded when the program stops, and nothing is written to disk.">
             <span aria-hidden="true">&#8987;</span> Demo &mdash; nothing is saved
+        </span>
+    {{else if .ReadOnly}}
+        {{- /* A backup being looked at. Marked in the frame for the same reason
+               the demo is: a register that cannot be written to looks exactly
+               like one that can until somebody tries. */ -}}
+        <span class="locked" title="Opened for reading only, which is how a backup is looked at. Nothing here can be changed.">
+            <span aria-hidden="true">&#128274;</span> Read-only &mdash; nothing can be changed
         </span>
     {{end}}
 </header>
@@ -60,8 +67,12 @@
             <p class="muted">None yet.</p>
         {{end}}
         {{- /* An ordinary link, because it goes to a page. The list is beside
-               every page, so this is how an account is added from anywhere. */ -}}
-        <p class="add-account"><a href="/accounts/new">+ Add account</a></p>
+               every page, so this is how an account is added from anywhere. It
+               is withheld from a checkbook opened read-only rather than offered
+               and then refused. */ -}}
+        {{if not .ReadOnly}}
+            <p class="add-account"><a href="/accounts/new">+ Add account</a></p>
+        {{end}}
     </nav>
 
     {{- /* The second section: what can be done to the checkbook itself, as
@@ -80,7 +91,7 @@
         {{- /* Withheld for a database held in memory: there is no file to copy,
                and an action that can only be refused is worse than one that is
                not offered. */ -}}
-        {{if not .Ephemeral}}
+        {{if and (not .Ephemeral) (not .ReadOnly)}}
             <form method="post" action="/backup">
                 <input type="hidden" name="return" value="{{.ReturnTo}}">
                 <button type="submit" class="action">Back up now</button>
@@ -110,6 +121,11 @@
         <span title="Sample data held in memory. It is discarded when the program stops, and nothing is written to disk.">
             <span class="temporary-mark" aria-hidden="true">&#8987;</span>
             Database: <code>{{.Database}}</code> &mdash; held in memory, nothing is saved
+        </span>
+    {{else if .ReadOnly}}
+        <span title="Opened for reading only, which is how a backup is looked at. Nothing here can be changed.">
+            <span class="temporary-mark" aria-hidden="true">&#128274;</span>
+            Database: <code>{{.Database}}</code> &mdash; open for reading only
         </span>
     {{else}}
         <span title="The file holding your records. Back this file up.">Database: <code>{{.Database}}</code></span>

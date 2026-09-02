@@ -89,6 +89,22 @@ func DescribeOpenError(err error, database string) Problem {
 		}
 		p.Docs = []Doc{docFirstFile, docManual}
 
+	case errors.Is(err, storage.ErrDatabaseTooOld):
+		p.Heading = "That backup was written by an older version of the program"
+		p.Steps = []string{
+			"Copy the file, then open the copy without the read-only box ticked. Opening it normally brings its schema up to date, and doing that to a copy leaves the backup itself untouched.",
+			"Do not open this file normally. Bringing it up to date would rewrite it, and a backup that has been rewritten is no longer the backup you took.",
+		}
+		p.Docs = []Doc{docUpgrade, docManual}
+
+	case errors.Is(err, storage.ErrMissingFile):
+		p.Heading = "There is no file there"
+		p.Steps = []string{
+			"Check the path. Read-only never creates a file, so a name that does not exist is reported rather than turned into an empty checkbook.",
+			"To start a new checkbook instead, type a path that does not exist yet and leave the read-only box unticked.",
+		}
+		p.Docs = []Doc{docFirstFile, docManual}
+
 	case errors.Is(err, storage.ErrMissingDirectory):
 		p.Heading = "That folder does not exist"
 		p.Steps = []string{
