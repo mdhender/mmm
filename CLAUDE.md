@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `mmm` is a local-first household **checkbook** written in Go. The repository is early. The
 storage layer, the domain packages behind the register, and a web UI exist (`cmd/checkbook` serves
-it). The register creates accounts, displays them, takes new transactions, and marks them cleared;
-editing an account or a transaction, splitting, transfers, importing, and reconciling do not exist
-yet. Much of the code written here is still creating the application rather than modifying it.
+it). The register creates accounts, displays them, takes new transactions, and marks them cleared,
+and the checkbook itself can be backed up, closed, reopened, opened read-only, and quit from the
+browser; editing an account or a transaction, splitting, transfers, importing, and reconciling do
+not exist yet. Much of the code written here is still creating the application rather than
+modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
 `RG-`, `RC-`, `IE-`, `BK-`, `CO-`, `PV-`, `TS-`, `RP-`, `SC-`). Check work against it and cite IDs
@@ -97,12 +99,23 @@ reuse them rather than becoming a second application.
   balance is computed there, not in a template**, so every interface shows the same number.
   `transaction.Create` writes a transaction and its splits in one database transaction and
   rejects splits that do not total the amount.
+- `internal/backup` — writes a verified, timestamped copy of a database (BK-2, BK-5).
+  `backup.Create(ctx, src, dir)` takes a **path**, not a `*storage.Store`, which is what lets the
+  same code copy a checkbook that is open and one just closed. `VACUUM INTO` on a connection the
+  package opens itself; never inside a transaction (`VACUUM` fails there, which also rules out
+  `ExecuteScript`), and the destination is **bound as a parameter**. The copy is written under a
+  working name, reopened with `storage.OpenReadOnly` and `PRAGMA quick_check`, and only then
+  renamed — so a file that will not read back never carries a backup's name. An existing backup is
+  never written over, and no directory is created (ST-6).
 - `internal/web` — the browser interface; see Web UI below.
 - `internal/storage` — opens and migrates the SQLite database; owns the schema. `storage.Open(ctx,
   path)` returns a `*Store`; borrow connections with `Conn(ctx)` and always return them with
   `Put`. **`Pool.Close` blocks until every borrowed connection is returned** — a `defer
   store.Close()` alongside a still-borrowed connection deadlocks. `OpenMemory` gives tests a
-  database that touches no files. Also exports `BindMoney` / `ColumnMoney`; see Storage below.
+  database that touches no files, and `OpenReadOnly` opens one without migrating or writing to it
+  (see Read-only below). `Store.Close` is idempotent, because the program can honestly reach a
+  second close and `sqlitex.Pool.Close` panics on one. Also exports `BindMoney` / `ColumnMoney`;
+  see Storage below.
 - `internal/dotenv` — `dotenv.Load(env)` wraps `joho/godotenv`. `env` must be one of
   `development`, `test`, `production`, or `agents`; **`agents` is reserved for the coding agent's
   own local work**. Files load highest-precedence first: `.env.{env}.local`, `.env.local`,
@@ -168,6 +181,28 @@ each connection would silently get *its own separate database*. So the mode is c
 In-memory databases do not support WAL and report a journal mode of `memory`. `prepareConn`
 expects that for in-memory stores and skips the WAL check, but still enforces and verifies
 `foreign_keys`, so constraint behavior under test matches production.
+
+### Read-only
+
+`storage.OpenReadOnly(ctx, path)` is how a **backup** is looked at. `Open` migrates on open, so
+merely looking at an older copy would rewrite the artifact, and a backup that has been rewritten is
+not the backup that was taken.
+
+- `Store.pool` is a three-method interface (`Take`, `Put`, `Close`) so a `*sqlitemigration.Pool`
+  and a plain `*sqlitex.Pool` can both sit behind it. The read-only pool is opened with
+  `sqlite.OpenReadOnly` and **without `OpenCreate`**, so a missing file is reported rather than
+  created, and **without `OpenURI`**, so a `?` in a folder name stays part of the name.
+- Read-only never reaches sqlitemigration, so the two guards it was making are made here instead:
+  `application_id` against `AppID`, and the schema version. An **older** database is refused with
+  `ErrDatabaseTooOld` and the advice to copy it and open the copy — migrating it in place is the
+  one thing that must not happen. A newer one is still `ErrDatabaseTooNew`.
+- `prepareConn` relaxes its WAL *verification* for a read-only connection as it already does for an
+  in-memory one: a read-only connection reports the file's own journal mode, which is `delete` for
+  anything `VACUUM INTO` produced, and setting it would be a write. `foreign_keys` is still
+  enforced and verified.
+- `Store.ReadOnly()` reaches the UI as `layout.ReadOnly`. Every write action is **withheld rather
+  than offered and then refused**, and `web.withWritableCheckbook` answers one that arrives anyway
+  with a written explanation rather than SQLite's `attempt to write a readonly database`.
 
 ### Time, dates, and identifiers
 
@@ -352,6 +387,37 @@ HTML. No SQL and no balance arithmetic belong here.
   shown top and bottom -- a register that keeps nothing must not look like one that does. Every
   page goes through `Server.pageLayout`, which is what stops a new page quietly omitting it, or
   the database path BK-3 requires.
+- **The open checkbook is not fixed.** `Server.current` is a `*checkbook`, swapped under
+  `Server.mu`, and a request holds one open with a **lease** (`acquire`), never a lock held across
+  the request. `withCheckbook` is the only way to turn a `checkbookHandler` into an
+  `http.HandlerFunc`, so forgetting the lease is a compile error rather than a nil dereference
+  inside the pool. See `internal/web/checkbook.go`, whose comments carry the argument; the rules
+  that matter are that **the close, open and quit handlers must not take a lease**, that
+  `store.Close()` is never called with `s.mu` held, and that the wait is coupled to *connection*
+  lifetime — which `Pool.Close` forces to an end by interrupting its borrowers — never to request
+  lifetime, which has no bound.
+- **A pool that closes underneath a request must not be reported as a database fault.** Use
+  `dbFailed` rather than `fail` for a database error on a leased checkbook: it compares generations
+  and answers the no-checkbook page instead of "the database reported an error while listing
+  accounts".
+- **Control routes** — `/backup`, `/checkbook/close`, `/checkbook/open`, `/quit` — act on the file
+  or the process rather than on a record. They are POST only and go through `Server.control`, which
+  reads `Sec-Fetch-Site` and `Origin`. That is **not** the machinery PL-7 forbids: no token, no
+  state, no principal, and requests with neither header (curl, httptest) are unaffected. Close and
+  Quit confirm first (RG-3), and the close form carries the checkbook's generation so a stale tab
+  is refused the way `transaction.SetStatus` refuses a stale row (CO-3).
+- **Pages not built on the layout** are listed in `standaloneFiles` and parsed on their own.
+  `problem.gohtml`, `no-checkbook.gohtml`, `quit.gohtml`, `goodbye.gohtml`. Leaving one off that
+  list parses it against the layout, where it defines no `main` and fails at render time — which is
+  what parsing at startup exists to prevent. `goodbye.gohtml` carries its styles **inline**:
+  `/static/app.css` is a second request and the server is gone by the time it is made.
+- **The no-checkbook page reuses `DescribeOpenError`, not `NewProblem`.** `NewProblem` builds its
+  own catch-all mux; swapping `http.Server.Handler` while `Serve` runs is a data race, and its `/`
+  route would swallow the two addresses the reader has left.
+- **`main` injects what `web` must not know.** `Options.Open` is an `Opener`, because seeding the
+  demo exists only in the command and `openStore` owns ST-6's wording; `Options.Quit` is a second
+  `context.CancelFunc` stacked on the signal's; `Options.Restart` is composed at startup, before
+  anything can change directory.
 - **Do not add authentication, sessions, or CSRF tokens** (PL-7).
 
 ## Constraints that override normal defaults
@@ -373,7 +439,8 @@ pointers — if this list and the specification ever disagree, the specification
 - **Reconciliation never manufactures agreement** (RC-1, RC-2, RC-3). No adjustment entries, no
   edits to prior transactions.
 - **Explicit migrations, confirmed destructive actions, timestamped backups before risky
-  operations** (ST-4, RG-3, BK-1).
+  operations** (ST-4, RG-3, BK-1). Backups exist now: `internal/backup`, and **Back up now** in the
+  sidebar. A backup is not a file that was written (BK-5).
 - **No ads, nags, expiring features, or degraded old releases** (PV-3, PV-4).
 
 For scope questions apply SC-1's three tests; SC-2 lists what is out of scope and SC-3 fixes the
