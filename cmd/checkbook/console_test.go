@@ -9,8 +9,9 @@ import (
 	"testing"
 )
 
-// TestShouldHoldConsole pins the three conditions. Only Windows started with a
-// console and a reader expecting a browser should ever block on input.
+// TestShouldHoldConsole pins the remaining conditions. The caller has already
+// established that the program failed to start and that no browser window
+// carried the message; only Windows with a real console should then block.
 func TestShouldHoldConsole(t *testing.T) {
 	regular, err := os.Create(filepath.Join(t.TempDir(), "not-a-console"))
 	if err != nil {
@@ -30,25 +31,22 @@ func TestShouldHoldConsole(t *testing.T) {
 	tests := []struct {
 		name  string
 		goos  string
-		open  bool
 		stdin *os.File
 		want  bool
 	}{
-		{"windows console", "windows", true, console, true},
+		{"windows console", "windows", console, true},
 		// A Terminal window opened by double-clicking on macOS stays open on a
 		// failing exit, and a Unix shell never closes on its own.
-		{"macos", "darwin", true, console, false},
-		{"linux", "linux", true, console, false},
-		// -open=false means something is driving the program rather than
-		// someone, and waiting for input would hang it.
-		{"windows, browser suppressed", "windows", false, console, false},
-		// A pipe or a file has nobody to press anything.
-		{"windows, redirected input", "windows", true, regular, false},
+		{"macos", "darwin", console, false},
+		{"linux", "linux", console, false},
+		// A pipe or a file has nobody to press anything, and waiting would hang
+		// whatever is driving the program.
+		{"windows, redirected input", "windows", regular, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldHoldConsole(tt.goos, tt.open, tt.stdin); got != tt.want {
-				t.Errorf("shouldHoldConsole(%q, %v) = %v, want %v", tt.goos, tt.open, got, tt.want)
+			if got := shouldHoldConsole(tt.goos, tt.stdin); got != tt.want {
+				t.Errorf("shouldHoldConsole(%q) = %v, want %v", tt.goos, got, tt.want)
 			}
 		})
 	}

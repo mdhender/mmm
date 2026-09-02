@@ -57,20 +57,28 @@ var (
 func main() {
 	flag.Parse()
 
-	if err := run(); err != nil {
-		if !errors.Is(err, errReported) {
-			fmt.Fprintf(os.Stderr, "checkbook: %v\n", err)
-		}
-		holdConsoleOnExit(*openBrowser)
-		os.Exit(1)
+	browserOpened, err := run()
+	if err == nil {
+		return
 	}
+	if !errors.Is(err, errReported) {
+		fmt.Fprintf(os.Stderr, "checkbook: %v\n", err)
+	}
+	// The console is the last resort, not the first. When a browser window was
+	// opened it is already carrying the explanation -- a failure to open the
+	// database is served as a page -- and there is nothing here the reader needs
+	// to stop and read.
+	if !browserOpened {
+		holdConsoleOnExit()
+	}
+	os.Exit(1)
 }
 
-func run() error {
+func run() (browserOpened bool, err error) {
 	version := mmm.Version()
 	if *showVersion {
 		fmt.Println(version.String())
-		return nil
+		return false, nil
 	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -79,7 +87,7 @@ func run() error {
 	// unauthenticated by design (PL-7), which is only safe because it is
 	// unreachable from off the machine (PL-4).
 	if err := requireLoopback(*host); err != nil {
-		return err
+		return false, err
 	}
 
 	// The listener is opened before the database so that a port already in use
@@ -87,7 +95,7 @@ func run() error {
 	addr := net.JoinHostPort(*host, fmt.Sprint(*port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", addr, err)
+		return false, fmt.Errorf("listen on %s: %w", addr, err)
 	}
 	defer listener.Close()
 
@@ -101,37 +109,13 @@ func run() error {
 	// does have a terminal.
 	var handler http.Handler
 	store, storeErr := openStore(ctx, *dbPath, *demo)
-	if storeErr == nil && !*demo {
-		// Claim the database now that it is known to open and the address is
-		// known. A second copy of the program on the same file is the case this
-		// guards: two registers over one database, each unaware of the other's
-		// writes, is precisely the silent loss CO-3 exists to prevent.
-		//
-		// -demo is exempt. Its database is held in memory and private to the
-		// process, so two of them share nothing.
-		resolved, err := databasePath(*dbPath)
-		if err != nil {
-			store.Close()
-			return err
-		}
-		held, other, err := acquireLock(resolved, "http://"+listener.Addr().String()+"/", os.Getpid())
-		if err != nil {
-			store.Close()
-			return err
-		}
-		if other != nil {
-			store.Close()
-			return alreadyRunning(os.Stderr, *other, resolved, *openBrowser, log)
-		}
-		defer held.Release()
-	}
 	if storeErr != nil {
 		fmt.Fprintf(os.Stderr, "checkbook: %v\n", storeErr)
 		handler, err = web.NewProblem(
 			web.DescribeOpenError(storeErr, databaseName(*dbPath, *demo)),
 			version.Short())
 		if err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		// Pool.Close blocks until every borrowed connection is returned, so this
@@ -139,15 +123,8 @@ func run() error {
 		// shutdown below does that before returning.
 		defer store.Close()
 
-		served, err := databasePath(*dbPath)
-		if err != nil {
-			return err
-		}
-		if *demo {
-			served = demoDatabase
-		}
-		if handler, err = web.New(store, version.Short(), served, log); err != nil {
-			return err
+		if handler, err = web.New(store, version.Short(), log); err != nil {
+			return false, err
 		}
 	}
 
@@ -172,10 +149,15 @@ func run() error {
 	fmt.Printf("register:  %s\n", url)
 	fmt.Printf("press Ctrl+C to stop\n")
 
+	// Whether this succeeded decides where a later failure has to be reported.
+	// A browser showing the problem page has already told the reader what
+	// happened; a console is only needed when nothing else could.
 	if *openBrowser {
 		if err := openInBrowser(url); err != nil {
 			// Not fatal: the address is printed above and can be pasted in.
 			log.Warn("could not open a browser", "url", url, "err", err)
+		} else {
+			browserOpened = true
 		}
 	}
 
@@ -190,7 +172,7 @@ func run() error {
 
 	select {
 	case err := <-serveErr:
-		return err
+		return browserOpened, err
 	case <-ctx.Done():
 		fmt.Println("\nstopping")
 	}
@@ -200,17 +182,17 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
+		return browserOpened, fmt.Errorf("shutdown: %w", err)
 	}
 	if err := <-serveErr; err != nil {
-		return err
+		return browserOpened, err
 	}
 	// The program ran, but it never opened the records it was asked for. Say so
 	// in the exit status; the reason is already on screen.
 	if storeErr != nil {
-		return errReported
+		return browserOpened, errReported
 	}
-	return nil
+	return browserOpened, nil
 }
 
 // databaseName is what the program calls the database in its own output. It is

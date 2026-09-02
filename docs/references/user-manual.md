@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.7.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.8.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -33,7 +33,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.7.0-beta
+checkbook 0.8.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:53219/
 press Ctrl+C to stop
@@ -62,8 +62,8 @@ All records live in one SQLite file.
 | Default path | `checkbook.db` in the current directory |
 | Created if missing | Yes |
 | Directories created | Never. A path whose parent directory does not exist is an error and nothing is written. |
-| Companion files while running | `NAME-wal`, `NAME-shm`, and `NAME.lock`, in the same directory |
-| Companion files after a clean stop | None. The `-wal` contents are folded into the database file and the lock is removed. |
+| Companion files while running | `NAME-wal` and `NAME-shm`, in the same directory |
+| Companion files after a clean stop | None. Their contents are folded into the database file. |
 | Format | SQLite 3, readable by any SQLite tool |
 
 The file carries an application identifier of `0x4d4d4d20`. A SQLite file that does not carry it
@@ -82,38 +82,6 @@ A database is never migrated backwards.
 
 `-demo` uses a database held in memory. It is reported as `:memory:checkbook-demo` and is
 discarded when the program stops.
-
-## Running the program twice
-
-One copy of the program may have a database open at a time. While a database is
-open, `NAME.lock` sits beside it, recording the address the register is served
-from, the process id, and the time it started. It is a plain text file that
-explains itself, and it is safe to delete while the program is not running.
-
-Starting a second copy on the **same** database does not start a second register.
-It reports the address of the copy that is already running, opens the browser
-there, and exits with status 1:
-
-```
-checkbook: this checkbook is already open
-  database: /Users/example/Documents/checkbook/checkbook.db
-  register: http://127.0.0.1:53219/
-  started:  2026-09-01T22:45:36.000000Z by process 4242
-```
-
-Starting a copy on a **different** database is not restricted. Two checkbooks may
-be open at once; they share nothing. `-demo` is never restricted, because its
-database is held in memory and is private to the process.
-
-A lock left behind by a program that crashed or was killed is not an error and
-requires nothing of you. The next start checks whether the recorded address still
-answers as this same database; if it does not, the file is taken over. An
-instance that answers on that address while holding a *different* database — a
-port reused after a crash — is also treated as stale.
-
-The lock is advisory. Deleting the file while the program is running, or reaching
-the same database by a path the program cannot recognize as the same file, allows
-a second copy to start.
 
 ## The register screen
 
@@ -209,7 +177,11 @@ The path of the database file in use, and the program's version.
 Any other address returns a page reporting that the address is not served. Any request that is
 not a `GET` is refused with status 405.
 
-Accounts may be opened in several browser tabs at once.
+Accounts may be opened in several browser tabs at once, and more than one copy of the program may
+run at the same time, including on the same database. SQLite coordinates their access to the file.
+Each window shows the register as of when it was loaded and does not refresh when another writes;
+a write that would overwrite a change made since the page was loaded is refused rather than
+applied silently.
 
 ## When the database cannot be opened
 
@@ -239,17 +211,18 @@ In every case the database is left as it was found.
 The program exits with status 1, without opening the database or the listener, when it prints
 any of the following. None of them can be reported in the browser, because there is no listener.
 
-On Windows, when a browser was expected (`-open` left on) and the program was started with a
-console, the window is held open with `Press Enter to close this window.` so the message can be
-read. A console window opened by double-clicking the program otherwise closes the instant it
-exits, taking the message with it.
+These are the only failures with nowhere else to report themselves: they happen before there is a
+listener, so there is no page and no browser window to carry them. On Windows, when the program
+was started with a console, the window is therefore held open with `Press Enter to close this
+window.` so the message can be read — a console allocated by double-clicking the program otherwise
+closes the instant it exits, taking the message with it. A failure that *is* shown in the browser,
+such as a database that will not open, does not hold the console.
 
 | Message | Condition |
 | --- | --- |
 | `-host X is not a loopback address; the register is served only to this machine` | `-host` names an address reachable from another machine. |
 | `-host "X" is not a loopback address; use 127.0.0.1, ::1, or localhost` | `-host` is a name other than `localhost`. |
-| `listen on ADDR: ... bind: address already in use` | Another program holds the port named by `-port`. |
-| `this checkbook is already open` | Another copy of the program has this database open. See above. |
+| `listen on ADDR: ... bind: address already in use` | Another program, or another copy of this one, holds the port named by `-port`. |
 
 A browser that cannot be opened is reported as a warning; the program continues, and the address
 is on screen.

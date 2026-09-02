@@ -71,9 +71,9 @@ actually using.
 Press **Ctrl+C** in the terminal.
 
 Now look in the folder. You should see `checkbook.db` alone — while the program runs there are
-also `checkbook.db-wal`, `checkbook.db-shm`, and `checkbook.db.lock` beside it, and stopping it
-folds the first back into the database and removes the rest. **Copy the file only when the program
-is stopped**, or the copy can be missing the most recent changes.
+also `checkbook.db-wal` and `checkbook.db-shm` files, and stopping it folds those back into the
+database. **Copy the file only when the program is stopped**, or the copy can be missing the most
+recent changes.
 
 Seeing `checkbook.db` on its own is the reliable way to tell the program has really stopped.
 

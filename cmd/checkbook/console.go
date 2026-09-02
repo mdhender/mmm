@@ -14,10 +14,12 @@ import (
 //
 // The program is meant to be started by double-clicking it, and on Windows that
 // allocates a console window that closes the instant the process exits. An error
-// message printed into a window that vanishes has not been delivered. There is
-// not much else to be done about it: the failures this covers happen before
-// there is a listener, so they cannot be shown in the browser the way a database
-// problem is.
+// message printed into a window that vanishes has not been delivered.
+//
+// This is the last resort and not the usual path. A program that starts opens a
+// browser, and a database that will not open is reported as a page in that
+// browser. Only a failure early enough that there is no listener -- and so no
+// page and no window -- has nowhere else to go.
 func holdConsole(out io.Writer, in io.Reader) {
 	fmt.Fprintln(out, "\nPress Enter to close this window.")
 	// One line, or end of input. The result does not matter; the point is to
@@ -27,17 +29,15 @@ func holdConsole(out io.Writer, in io.Reader) {
 
 // shouldHoldConsole reports whether an exiting error needs the window held open.
 //
-// Three conditions, all of which have to hold:
+// The caller has already established the part that matters: the program could
+// not start, and no browser window was opened to say so. Two conditions remain:
 //
 //   - Windows. A macOS Terminal window opened by double-clicking stays open on a
 //     failing exit, and a Unix shell never closes on its own.
-//   - The reader expected a browser to open. Passing -open=false means something
-//     is driving the program rather than someone, and blocking on input would
-//     hang it.
 //   - Standard input is a console. When it is a pipe or a file there is nobody
-//     to press anything.
-func shouldHoldConsole(goos string, openBrowser bool, stdin *os.File) bool {
-	if goos != "windows" || !openBrowser {
+//     to press anything, and waiting would hang whatever is driving the program.
+func shouldHoldConsole(goos string, stdin *os.File) bool {
+	if goos != "windows" {
 		return false
 	}
 	info, err := stdin.Stat()
@@ -47,9 +47,10 @@ func shouldHoldConsole(goos string, openBrowser bool, stdin *os.File) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-// holdConsoleOnExit applies shouldHoldConsole to the real process.
-func holdConsoleOnExit(openBrowser bool) {
-	if shouldHoldConsole(runtime.GOOS, openBrowser, os.Stdin) {
+// holdConsoleOnExit applies shouldHoldConsole to the real process. Call it only
+// when the program is exiting with an error that no browser window carried.
+func holdConsoleOnExit() {
+	if shouldHoldConsole(runtime.GOOS, os.Stdin) {
 		holdConsole(os.Stdout, os.Stdin)
 	}
 }
