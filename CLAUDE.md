@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `mmm` is a local-first household **checkbook** written in Go. The repository is early. The
 storage layer, the domain packages behind the register, and a web UI exist (`cmd/checkbook` serves
-it). The register displays, takes new transactions, and marks them cleared; editing, splitting,
-transfers, importing, and reconciling do not exist yet. Much of the code written here is still
-creating the application rather than modifying it.
+it). The register creates accounts, displays them, takes new transactions, and marks them cleared;
+editing an account or a transaction, splitting, transfers, importing, and reconciling do not exist
+yet. Much of the code written here is still creating the application rather than modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
 `RG-`, `RC-`, `IE-`, `BK-`, `CO-`, `PV-`, `TS-`, `RP-`, `SC-`). Check work against it and cite IDs
@@ -330,9 +330,10 @@ HTML. No SQL and no balance arithmetic belong here.
   `internal/web/htmx.md`). It arrived with marking a row cleared, the first interaction that
   genuinely replaces part of a page: the answer is the one `<tr>` plus the totals as an
   out-of-band swap, because clearing moves the cleared balance and the uncleared count but not the
-  ending balance. It is **never a CDN reference** (PL-3, TS-4). Entering a transaction is still a
-  plain POST and a redirect — a new row changes the running balance of every row below it, so
-  there is no fragment to swap.
+  ending balance. It is **never a CDN reference** (PL-3, TS-4). Entering a transaction and
+  creating an account are still plain POSTs and redirects — a new row changes the running balance
+  of every row below it, and a new account changes the list beside every page, so in neither case
+  is there a fragment to swap.
 - **Every htmx control is a real form that works without it.** The handler answers a fragment when
   `HX-Request` is set and a redirect otherwise, so the register keeps working if the script never
   loads. Keep it that way rather than putting `hx-` attributes on a bare element.

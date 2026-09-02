@@ -5,6 +5,7 @@ package money_test
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/mdhender/mmm/internal/money"
@@ -69,6 +70,30 @@ func TestRegisterCurrency(t *testing.T) {
 	}
 	if m.Amount() != 100000001 {
 		t.Fatalf("Amount() = %d; want 100000001", m.Amount())
+	}
+}
+
+// TestCurrenciesListsWhatTheBuildKnows: a form offering a currency has to offer
+// the ones the registry holds, including one registered at run time.
+func TestCurrenciesListsWhatTheBuildKnows(t *testing.T) {
+	const xts money.Currency = "XTS"
+	if err := money.RegisterCurrency(xts, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	got := money.Currencies()
+	if !slices.IsSorted(got) {
+		t.Errorf("Currencies() = %v; want sorted", got)
+	}
+	for _, want := range []money.Currency{money.USD, money.EUR, money.GBP, money.JPY, money.KWD, xts} {
+		if !slices.Contains(got, want) {
+			t.Errorf("Currencies() = %v; missing %s", got, want)
+		}
+	}
+	for _, c := range got {
+		if _, ok := money.Scale(c); !ok {
+			t.Errorf("Currencies() offers %s, which has no scale", c)
+		}
 	}
 }
 

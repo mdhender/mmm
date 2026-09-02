@@ -6,6 +6,7 @@ package money
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +76,23 @@ func Scale(currency Currency) (int, bool) {
 	defer registry.RUnlock()
 	scale, ok := registry.scales[currency]
 	return scale, ok
+}
+
+// Currencies returns every currency this build knows, in code order.
+//
+// A form that offers a currency has to offer the ones the registry actually
+// holds. Listing them here rather than in the interface is what stops a select
+// box drifting from the registry the moment RegisterCurrency adds to it.
+func Currencies() []Currency {
+	registry.RLock()
+	defer registry.RUnlock()
+
+	out := make([]Currency, 0, len(registry.scales))
+	for currency := range registry.scales {
+		out = append(out, currency)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // NewMinor returns a Money value from an exact minor-unit amount.

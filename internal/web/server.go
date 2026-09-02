@@ -75,6 +75,10 @@ func New(store *storage.Store, version string, log *slog.Logger) (*Server, error
 // 405 from the mux rather than a handler that has to check.
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleRoot)
+	// More specific than /accounts/{id}, so ServeMux prefers it and an account
+	// can never be numbered "new".
+	s.mux.HandleFunc("GET /accounts/new", s.handleNewAccount)
+	s.mux.HandleFunc("POST /accounts", s.handleCreateAccount)
 	s.mux.HandleFunc("GET /accounts/{id}", s.handleRegister)
 	// The entry has its own address rather than a POST to the register's, so an
 	// unmatched method on a register URL still gets a 405 from the mux.
@@ -123,7 +127,7 @@ func parsePages() (map[string]*template.Template, error) {
 		pages[base] = t
 	}
 
-	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml"} {
+	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml", "new-account.gohtml"} {
 		if pages[required] == nil {
 			return nil, fmt.Errorf("web: missing template %s", required)
 		}

@@ -30,6 +30,12 @@ const (
 	// ErrInvalidType is returned when an account type is not one the schema
 	// accepts.
 	ErrInvalidType = cerrs.Error("invalid account type")
+
+	// ErrDuplicateName is returned when an account already has that name.
+	// Names are compared without regard to case, because the column is COLLATE
+	// NOCASE: two accounts differing only in capitalization would be a trap
+	// rather than a distinction.
+	ErrDuplicateName = cerrs.Error("account name already used")
 )
 
 // Type is the kind of account. The values are exactly the ones the schema's
@@ -42,6 +48,13 @@ const (
 	Credit   Type = "credit"
 	Cash     Type = "cash"
 )
+
+// Types returns every account type, in the order a form should offer them.
+//
+// The list lives beside the constants and the schema's CHECK constraint, so
+// adding a type is one edit and a migration rather than a constant, a CHECK, and
+// a select box that has to be found.
+func Types() []Type { return []Type{Checking, Savings, Credit, Cash} }
 
 // Valid reports whether t is a type the schema accepts.
 func (t Type) Valid() bool {
@@ -206,6 +219,13 @@ RETURNING` + columns + `;`)
 
 	hasRow, err := stmt.Step()
 	if err != nil {
+		// name is the only unique column on the table, so a uniqueness failure
+		// here can mean nothing else. It is reported as a sentinel rather than
+		// as a database error because the caller has something to say about it:
+		// this one is the user's to fix, not a fault in the program.
+		if sqlite.ErrCode(err) == sqlite.ResultConstraintUnique {
+			return Account{}, fmt.Errorf("create account %q: %w", n.Name, ErrDuplicateName)
+		}
 		return Account{}, fmt.Errorf("create account %q: %w", n.Name, err)
 	}
 	if !hasRow {

@@ -124,6 +124,54 @@ func TestCreateRejectsForeignOpeningBalance(t *testing.T) {
 	}
 }
 
+// TestCreateRefusesADuplicateName guards the rule the schema encodes with
+// COLLATE NOCASE: "Checking" and "checking" are one account, not two that would
+// split a household's records between them. The sentinel is what lets the
+// interface say so on the form rather than reporting a database error.
+func TestCreateRefusesADuplicateName(t *testing.T) {
+	store := open(t)
+
+	first := account.New{Name: "Checking", Type: account.Checking, Currency: money.USD}
+	if _, err := account.Create(t.Context(), store, first); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	second := account.New{Name: "checking", Type: account.Savings, Currency: money.USD}
+	if _, err := account.Create(t.Context(), store, second); !errors.Is(err, account.ErrDuplicateName) {
+		t.Fatalf("Create = %v, want ErrDuplicateName", err)
+	}
+
+	list, err := account.List(t.Context(), store)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("accounts = %d, want 1", len(list))
+	}
+}
+
+// TestTypesAreAllValid keeps the list a form offers and the set the schema
+// accepts from drifting apart.
+func TestTypesAreAllValid(t *testing.T) {
+	store := open(t)
+
+	types := account.Types()
+	if len(types) == 0 {
+		t.Fatal("Types is empty")
+	}
+	for _, tt := range types {
+		if !tt.Valid() {
+			t.Errorf("Types offers %q, which Valid rejects", tt)
+		}
+		// One store, so the accounts are named apart: the name is unique.
+		if _, err := account.Create(t.Context(), store, account.New{
+			Name: string(tt), Type: tt, Currency: money.USD,
+		}); err != nil {
+			t.Errorf("Create with type %q: %v", tt, err)
+		}
+	}
+}
+
 func TestGetMissingAccount(t *testing.T) {
 	store := open(t)
 	if _, err := account.Get(t.Context(), store, 404); !errors.Is(err, account.ErrNotFound) {

@@ -1,0 +1,58 @@
+{{define "main"}}
+    <div class="register-head">
+        <h1>New account</h1>
+        <p class="muted">An account is one statement: one card, or one account at one bank.</p>
+    </div>
+
+    {{- /* A plain form POST and a redirect, with no HTMX and no script. Adding an
+           account changes the list beside every page, so there is no fragment to
+           swap and a full re-render is the honest answer. The POST redirects,
+           which is what stops a reload creating a second account. */ -}}
+    <form class="entry account-form" method="post" action="/accounts">
+        {{if .FormError}}
+            {{- /* Says what happened and what to do next, like every other
+                   failure the program reports (RG-4). */ -}}
+            <p class="entry-error" role="alert">{{.FormError}}</p>
+        {{end}}
+
+        <div class="entry-fields">
+            <label class="f-name">Name
+                <input type="text" name="name" value="{{.Form.Name}}"
+                       autocomplete="off" placeholder="Checking" required autofocus>
+            </label>
+            <label class="f-type">Kind
+                <select name="type">
+                    {{range .Types}}
+                        <option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+                    {{end}}
+                </select>
+            </label>
+            <label class="f-currency">Currency
+                <select name="currency">
+                    {{range .Currencies}}
+                        <option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+                    {{end}}
+                </select>
+            </label>
+            {{- /* One box, not the register's two, so this one takes a sign: a
+                   card already owed on opens negative and there is no second box
+                   here to say so. */ -}}
+            <label class="f-opening">Opening balance
+                <input type="text" name="opening_balance" value="{{.Form.OpeningBalance}}"
+                       inputmode="decimal" class="money" placeholder="0.00">
+            </label>
+            <div class="f-add">
+                <button type="submit">Create</button>
+            </div>
+        </div>
+
+        <p class="muted entry-note">
+            The opening balance is what the account held before the first transaction you enter;
+            leave it empty to start at zero, and put a minus sign in front of it for a card you
+            already owe on. The currency is fixed when the account is created, and this release
+            cannot change it, or the name, afterwards.
+        </p>
+    </form>
+
+    {{if .Accounts}}<p><a href="/">Back to the register</a></p>{{end}}
+{{end}}

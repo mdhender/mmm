@@ -13,9 +13,10 @@ apart so that none of them has to be three things at once.
 **New here?** Read [About mmm](explanations/what-is-mmm.md) first, then
 [How to create your first checkbook](how-to/create-your-first-checkbook.md).
 
-**A caution before you plan around it:** this release *displays* a register and nothing more. It
-cannot yet create accounts, enter transactions, import, export, reconcile, or back up for you.
-Every document below says so where it matters, but it is easier to hear once, up front.
+**A caution before you plan around it:** this release keeps a register — it creates accounts, takes
+transactions, and marks them cleared. It cannot yet change or delete anything already entered, and
+it cannot split, transfer, import, export, reconcile, or back up for you. Every document below
+says so where it matters, but it is easier to hear once, up front.
 
 ## How-to guides
 

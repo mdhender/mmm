@@ -5,9 +5,8 @@ it somewhere you can protect, and confirm the program is using it.
 
 ## Before you start
 
-This release **displays** a register; it cannot yet create accounts or enter transactions. The
-file you make here is the one your records will live in once it can. Nothing in this guide has to
-be redone later.
+This guide takes you from nothing to an account you can enter transactions into. The file you make
+here is the one your records will live in.
 
 You need a source checkout of the project and a working Go toolchain. Run every command below
 from the repository root.
@@ -51,16 +50,39 @@ New-Item -ItemType Directory -Force ~\Documents\checkbook
 go run ./cmd/checkbook -db ~/Documents/checkbook/checkbook.db
 ```
 
-The file is created, and your browser opens on the register at `http://127.0.0.1:8842/`. Because
-the database is empty, the page says there are no accounts yet — that is the expected result at
-this stage.
+The file is created, and your browser opens at `http://127.0.0.1:8842/`. Because the database is
+empty, the page says there are no accounts yet and offers to add one — that is the expected result
+at this stage.
 
 **Bookmark that address.** It is the same every time the program runs, so it is how you get back
 to the register after closing the browser without starting a second copy.
 
 If you would rather it did not open a browser, add `-open=false` and use the address it prints.
 
-## 4. Confirm it is the file you meant
+## 4. Create your first account
+
+Follow **Add your first account**, or go to `http://127.0.0.1:8842/accounts/new`.
+
+An account is one statement: one card, or one account at one bank. Fill in four fields:
+
+- **Name** — what you call it. The name on the statement, or simply `Checking`.
+- **Kind** — checking, savings, credit card, or cash.
+- **Currency** — the currency the statement is in. Every amount in this account is held in it.
+- **Opening balance** — what the account held before the first transaction you are going to enter.
+  Leave it empty to start at zero. Put a minus sign in front of it for a card you already owe on.
+
+Press **Create**, and the browser goes to the account's register, with the opening balance as its
+starting balance.
+
+Choose these carefully. **This release cannot change an account once it is made** — not the name,
+the kind, the currency, or the opening balance — and it cannot delete one either. If you get one
+wrong now, while the database is otherwise empty, the quickest fix is to stop the program, delete
+the file, and start again from step 3.
+
+A household with several accounts adds them the same way: **+ Add account**, below the account
+list, is on every page.
+
+## 5. Confirm it is the file you meant
 
 Two places name the database, and they should agree with the path you chose:
 
@@ -70,7 +92,7 @@ Two places name the database, and they should agree with the path you chose:
 Check this now. It is the one habit that keeps you from carefully backing up a file you are not
 actually using.
 
-## 5. Stop the program, then make your first backup
+## 6. Stop the program, then make your first backup
 
 Press **Ctrl+C** in the terminal.
 
@@ -99,13 +121,12 @@ That copy is a complete backup. There is nothing else to export and no format to
 whole checkbook is that one file.
 
 Practise the restore once, now, while the stakes are zero: delete `checkbook.db`, rename the copy
-back to `checkbook.db`, and start the program again. It should come up on the same empty register.
-An untested backup is a guess.
+back to `checkbook.db`, and start the program again. It should come up on the same account you
+just made. An untested backup is a guess.
 
-## 6. See what a register looks like
+## 7. See what a filled-in register looks like
 
-While you wait for the program to be able to enter transactions, you can look at a filled-in
-register:
+A household with a year of records in it looks like this:
 
 ```sh
 go run ./cmd/checkbook -demo
@@ -114,7 +135,7 @@ go run ./cmd/checkbook -demo
 This serves a sample household from memory. It reads and writes no files, and it does not touch
 the database you just made.
 
-## 7. Keep the command where you can find it
+## 8. Keep the command where you can find it
 
 You will type the same command every time. Put it in a shell alias, a note, or a one-line script:
 

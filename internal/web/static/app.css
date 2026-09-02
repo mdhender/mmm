@@ -58,6 +58,7 @@ a { color: var(--accent); }
 .accounts a:hover { background: var(--panel); }
 .accounts a.active { background: var(--accent); color: #fff; font-weight: 600; }
 .accounts .closed { font-size: .75rem; color: var(--muted); }
+.accounts .add-account { margin: .75rem 0 0; padding: 0 .5rem; font-size: .85rem; }
 .accounts a.active .closed { color: #dfe8f0; }
 
 main { flex: 1 1 auto; padding: 1rem 1.5rem 2rem; min-width: 0; }
@@ -149,11 +150,30 @@ td.memo, td.payee, td.category { overflow-wrap: anywhere; }
     text-transform: none;
     letter-spacing: normal;
 }
-.entry-fields input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+/* The select boxes match the text boxes rather than the browser's default,
+   so a row of fields reads as one row. */
+.entry-fields select {
+    font: inherit;
+    padding: .3rem .4rem;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink);
+    text-transform: none;
+    letter-spacing: normal;
+}
+.entry-fields input:focus-visible,
+.entry-fields select:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .entry-fields input.money { text-align: right; }
 .f-date input, .f-payment input, .f-deposit input { width: 7rem; }
 .f-num input { width: 4.5rem; }
 .f-payee input, .f-category input, .f-memo input { width: 11rem; }
+.f-name input { width: 14rem; }
+.f-opening input { width: 9rem; }
+
+/* The new-account form is a page of its own rather than a strip under a table,
+   so it does not need the register's rule above it. */
+.account-form { margin: 0; padding-top: 0; border-top: none; max-width: 56rem; }
+.cta { font-weight: 600; }
 .entry-fields button {
     font: inherit;
     padding: .35rem 1.1rem;

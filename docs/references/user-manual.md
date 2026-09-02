@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.12.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.13.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -9,8 +9,8 @@ version, see [How to upgrade the application](../how-to/upgrade-the-application.
 
 ## What this release does
 
-The program displays a check register from a local database file, and accepts new transactions
-into it.
+The program displays a check register from a local database file, and accepts accounts and
+transactions into it.
 
 It shows:
 
@@ -21,13 +21,14 @@ It shows:
 
 It can:
 
+- create an account, with a kind, a currency, and an opening balance
 - enter a transaction into an account, with an optional category
 - mark a transaction cleared, and mark it not cleared again
 
-It does not create or edit accounts, change or delete transactions already entered, split a
-transaction among several categories, record a transfer between accounts, reconcile, import,
-export, create backups, search, or produce reports. There is no terminal interface and no
-command-line subcommand.
+It does not change an account once created — rename it, change its currency, close it, or remove
+it — and it does not change or delete transactions already entered, split a transaction among
+several categories, record a transfer between accounts, reconcile, import, export, create backups,
+search, or produce reports. There is no terminal interface and no command-line subcommand.
 
 ## Starting the program
 
@@ -40,7 +41,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.12.0-beta
+checkbook 0.13.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -122,7 +123,35 @@ right, and a status bar along the bottom.
 ### Account list
 
 Every account in the database, open accounts first and alphabetically within each group. The
-account being displayed is highlighted. A closed account is marked `closed`.
+account being displayed is highlighted. A closed account is marked `closed`. Below the list,
+**+ Add account** opens the form described next; the list is beside every page, so an account can
+be added from anywhere, including from a database that has none.
+
+### Adding an account
+
+`/accounts/new` is a form of four fields.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| Name | Yes | Must not already be in use. Names are compared without regard to case, so `checking` and `Checking` are the same account. |
+| Kind | Yes | `Checking`, `Savings`, `Credit card`, or `Cash`. Stored as `checking`, `savings`, `credit`, `cash`. |
+| Currency | Yes | Every currency the build knows: USD, EUR, GBP, JPY, KWD. On an empty database the box opens on USD; once there is an account, it opens on that account's currency. |
+| Opening balance | No | The balance before the first transaction entered. Empty means zero. |
+
+Unlike the register's Payment and Deposit boxes, the opening balance is **one box and takes a
+sign**: a card already owed on opens negative, and there is nothing else here to say so. An amount
+more precise than the currency — a third decimal place in USD — is refused rather than rounded.
+
+On success the browser goes to the new account's register, where the opening balance is the
+starting balance and, having no transactions, the ending and cleared balances both. Reloading that
+page does not create a second account.
+
+If the account is refused, the form comes back with what was typed still in it and a message above
+it saying what was wrong and what to do about it. Nothing is written.
+
+**Nothing in this release changes an account after it is created.** The name, the kind, the
+currency, and the opening balance are fixed at creation, and an account cannot be closed or
+removed from the browser.
 
 ### Account heading
 
@@ -242,7 +271,8 @@ A category name that already exists is reused, regardless of case: typing `groce
 `Groceries` exists files the transaction under the existing category and does not create a second
 one. The stored spelling is not changed.
 
-A new transaction is always **uncleared**. Marking it cleared is not available in this release.
+A new transaction is always **uncleared**; the bank showing it is a separate fact, recorded
+separately (see [Marking a transaction cleared](#marking-a-transaction-cleared)).
 
 On success the browser returns to the register, positioned on the new row, and the running
 balances and totals are recalculated. Reloading that page does not enter the transaction a second
@@ -264,6 +294,8 @@ contacts GitHub.
 | Address | Response |
 | --- | --- |
 | `/` | Redirects to the first account. If the database has no accounts, a page saying so. |
+| `/accounts/new` | The form for a new account. More specific than `/accounts/N`, so no account is ever reached at this address. |
+| `POST /accounts` | Creates an account. Answers with a redirect to its register. |
 | `/accounts/N` | The register for account `N`. Stable: an account's number is never reassigned. |
 | `POST /accounts/N/transactions` | Enters a transaction into account `N`. Answers with a redirect back to the register. |
 | `POST /accounts/N/transactions/M/status` | Marks transaction `M` cleared or uncleared. Answers with the row and the totals, or with a redirect when the request did not come from the page's script. |
@@ -336,6 +368,7 @@ is on screen.
 | The address is not served | 404 |
 | The database cannot be read | 500 |
 | An entry is refused; the register returns with the entry still in the form | 422 |
+| An account is refused, including a name already in use; the form returns with what was typed still in it | 422 |
 | An entry is addressed to a closed account | 409 |
 | A mark arrives without the version of the transaction it was made against | 400 |
 | A mark is refused because the transaction changed in another window | 409, or the row and a message when the page's script made the request |
