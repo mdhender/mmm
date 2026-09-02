@@ -37,6 +37,17 @@ const (
 	// ErrSplitTotal is returned when the splits of a transaction do not add up
 	// to its amount.
 	ErrSplitTotal = cerrs.Error("splits do not total the transaction amount")
+
+	// ErrConflict is returned when a write would overwrite a change made since
+	// the writer last read the record (SPECIFICATION.md CO-3). It is not a
+	// failure to retry blindly: the caller has to say so, because the two edits
+	// may well disagree about what the transaction is.
+	ErrConflict = cerrs.Error("the transaction changed since it was read")
+
+	// ErrReconciled is returned when a change is asked of a reconciled
+	// transaction. Finishing a reconciliation records a fact, and the register
+	// does not rewrite it afterwards (RC-3).
+	ErrReconciled = cerrs.Error("a reconciled transaction cannot be changed from the register")
 )
 
 // DateLayout is the storage and display form of a calendar date.
@@ -336,6 +347,122 @@ VALUES ($transaction_id, $category_id, $amount, $memo);`)
 	}
 
 	return txn, nil
+}
+
+// SetStatus changes a transaction's status against the concurrency token it was
+// read with.
+//
+// seen is the UpdatedAt the caller read. If the stored value has moved on, the
+// write is refused with ErrConflict rather than applied: the household may have
+// the same register open in several tabs, and discarding somebody's change
+// without saying so is precisely the quiet loss CO-3 forbids.
+//
+// A reconciled transaction is refused with ErrReconciled. Cleared and reconciled
+// are different facts -- one says the bank showed it, the other says a finished
+// reconciliation recorded it -- and clearing a reconciled row from the register
+// would rewrite the second (RC-3).
+func SetStatus(ctx context.Context, store *storage.Store, acct account.Account, id int64, status Status, seen time.Time) (txn Transaction, err error) {
+	if !status.Valid() {
+		return Transaction{}, fmt.Errorf("%q: %w", status, ErrInvalidStatus)
+	}
+	if status == Reconciled {
+		// Reconciling is a reconciliation's job, not a register toggle's (RC-3).
+		return Transaction{}, fmt.Errorf("%q: %w", status, ErrInvalidStatus)
+	}
+
+	conn, err := store.Conn(ctx)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("set status: %w", err)
+	}
+	defer store.Put(conn)
+
+	// The read and the write share one immediate transaction, so the token
+	// cannot move between checking it and acting on it. Doing the UPDATE first
+	// and asking afterwards why it matched nothing would be a second query
+	// against a row that may have changed again in between.
+	endTx, err := sqlitex.ImmediateTransaction(conn)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("set status: %w", err)
+	}
+	defer endTx(&err)
+
+	current, err := get(conn, acct, id)
+	if err != nil {
+		return Transaction{}, err
+	}
+	if current.Status == Reconciled {
+		return Transaction{}, fmt.Errorf("transaction %d: %w", id, ErrReconciled)
+	}
+	if !current.UpdatedAt.Equal(seen.UTC().Truncate(time.Microsecond)) {
+		return Transaction{}, fmt.Errorf("transaction %d: %w", id, ErrConflict)
+	}
+	if current.Status == status {
+		// Already there. Say so by doing nothing rather than by burning a token
+		// and making every other open tab stale for no change.
+		return current, nil
+	}
+
+	stmt, err := conn.Prepare(`
+UPDATE transactions SET status = $status, updated_at = $updated_at
+ WHERE id = $id AND updated_at = $seen
+RETURNING id, account_id, date, payee, memo, amount, status, check_number,
+          created_at, updated_at;`)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("set status: %w", err)
+	}
+	stmt.SetText("$status", string(status))
+	storage.BindTime(stmt, "$updated_at", storage.NextUpdatedAt(current.UpdatedAt, time.Now()))
+	stmt.SetInt64("$id", id)
+	storage.BindTime(stmt, "$seen", current.UpdatedAt)
+
+	hasRow, err := stmt.Step()
+	if err != nil {
+		_ = stmt.Reset()
+		return Transaction{}, fmt.Errorf("set status: %w", err)
+	}
+	if !hasRow {
+		// The WHERE still carries the token, so this is reachable only if the row
+		// moved between the read above and here. It cannot happen inside an
+		// immediate transaction, and it is checked anyway: the alternative to
+		// noticing is overwriting.
+		_ = stmt.Reset()
+		return Transaction{}, fmt.Errorf("transaction %d: %w", id, ErrConflict)
+	}
+	txn, err = scanTransaction(stmt, acct.Currency)
+	if resetErr := stmt.Reset(); err == nil {
+		err = resetErr
+	}
+	if err != nil {
+		return Transaction{}, fmt.Errorf("set status: %w", err)
+	}
+	return txn, nil
+}
+
+// get reads one of acct's transactions on an open connection.
+//
+// It is scoped to the account so an id belonging to another account reads as
+// missing rather than as somebody else's row: the id comes from a URL, and a URL
+// can be edited.
+func get(conn *sqlite.Conn, acct account.Account, id int64) (Transaction, error) {
+	stmt, err := conn.Prepare(`
+SELECT id, account_id, date, payee, memo, amount, status, check_number,
+       created_at, updated_at
+  FROM transactions WHERE id = $id AND account_id = $account_id;`)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("get transaction: %w", err)
+	}
+	stmt.SetInt64("$id", id)
+	stmt.SetInt64("$account_id", acct.ID)
+	defer stmt.Reset()
+
+	hasRow, err := stmt.Step()
+	if err != nil {
+		return Transaction{}, fmt.Errorf("get transaction: %w", err)
+	}
+	if !hasRow {
+		return Transaction{}, fmt.Errorf("transaction %d: %w", id, ErrNotFound)
+	}
+	return scanTransaction(stmt, acct.Currency)
 }
 
 // checkSplitTotal reports whether the splits add up to amount. A transaction with

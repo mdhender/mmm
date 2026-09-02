@@ -8,6 +8,7 @@ import (
 
 	"github.com/mdhender/mmm/internal/account"
 	"github.com/mdhender/mmm/internal/category"
+	"github.com/mdhender/mmm/internal/storage"
 	"github.com/mdhender/mmm/internal/transaction"
 )
 
@@ -39,6 +40,15 @@ type registerPage struct {
 	// just tried to write to.
 	FormError string
 
+	// Notice reports something that happened to the register itself rather than
+	// to the entry form: a change refused because another tab got there first.
+	Notice string
+
+	// OOB marks a fragment response rather than a whole page, so the totals
+	// carry hx-swap-oob and are replaced in place. It is false on every full
+	// render.
+	OOB bool
+
 	// Categories are the names already in use, offered to the category box as
 	// suggestions. The box still takes anything typed: this is what stops a
 	// slip creating "Grocerys" beside "Groceries", not a restriction on what a
@@ -49,6 +59,7 @@ type registerPage struct {
 // registerRow is one line of the register.
 type registerRow struct {
 	ID            int64
+	AccountID     int64
 	Date          string
 	CheckNumber   string
 	Payee         string
@@ -63,6 +74,19 @@ type registerRow struct {
 
 	StatusMark  string
 	StatusLabel string
+
+	// Token is the row's updated_at, sent back with a change so a write from a
+	// tab holding a stale value is refused rather than applied (CO-3).
+	Token string
+
+	// Reconciled rows carry no control. A finished reconciliation is a fact, and
+	// the register does not rewrite it (RC-3).
+	Reconciled bool
+
+	// NextStatus is what the control sets, and ActionLabel names it. The mark is
+	// a toggle, so both flip with the row's current status.
+	NextStatus  string
+	ActionLabel string
 }
 
 // handleRoot sends the reader to an account, or explains that there are none.
@@ -193,21 +217,39 @@ func buildRegisterPage(l layout, reg transaction.Register) registerPage {
 	}
 
 	for _, e := range reg.Entries {
-		page.Rows = append(page.Rows, registerRow{
-			ID:              e.ID,
-			Date:            e.Date,
-			CheckNumber:     e.CheckNumber,
-			Payee:           e.Payee,
-			Category:        categoryLabel(e),
-			Uncategorized:   !e.IsSplit() && e.Category == "",
-			Memo:            e.Memo,
-			Amount:          formatAmount(e.Amount),
-			AmountNegative:  e.Amount.IsNegative(),
-			Balance:         formatAmount(e.Balance),
-			BalanceNegative: e.Balance.IsNegative(),
-			StatusMark:      statusMark(e.Status),
-			StatusLabel:     statusLabel(e.Status),
-		})
+		page.Rows = append(page.Rows, buildRegisterRow(reg.Account, e))
 	}
 	return page
+}
+
+// buildRegisterRow formats one entry. It is its own function because a single
+// row is also rendered on its own, as the answer to marking one cleared.
+func buildRegisterRow(acct account.Account, e transaction.Entry) registerRow {
+	row := registerRow{
+		ID:              e.ID,
+		AccountID:       acct.ID,
+		Date:            e.Date,
+		CheckNumber:     e.CheckNumber,
+		Payee:           e.Payee,
+		Category:        categoryLabel(e),
+		Uncategorized:   !e.IsSplit() && e.Category == "",
+		Memo:            e.Memo,
+		Amount:          formatAmount(e.Amount),
+		AmountNegative:  e.Amount.IsNegative(),
+		Balance:         formatAmount(e.Balance),
+		BalanceNegative: e.Balance.IsNegative(),
+		StatusMark:      statusMark(e.Status),
+		StatusLabel:     statusLabel(e.Status),
+		Token:           storage.FormatTime(e.UpdatedAt),
+		Reconciled:      e.Status == transaction.Reconciled,
+	}
+
+	// The control offers the other state, so the label says what pressing it
+	// does rather than what the row already is.
+	if e.Status.HasCleared() {
+		row.NextStatus, row.ActionLabel = string(transaction.Uncleared), "Mark not cleared"
+	} else {
+		row.NextStatus, row.ActionLabel = string(transaction.Cleared), "Mark cleared"
+	}
+	return row
 }

@@ -94,6 +94,38 @@ td.memo, td.payee, td.category { overflow-wrap: anywhere; }
 
 .next-step { padding: .6rem .8rem; background: var(--panel); border-left: 3px solid var(--accent); }
 
+/* The status column's mark. It is a button, but it has to read as a register
+   column: a checkbook's cleared column is a mark, not a widget. The button is
+   stripped back to the mark itself and only shows its edges under the cursor or
+   the keyboard. */
+.register .status form { margin: 0; }
+.mark {
+    font: inherit;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    width: 1.6rem;
+    padding: 0 .2rem;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    background: none;
+    color: var(--ink);
+    cursor: pointer;
+    line-height: 1.3;
+}
+.mark:hover { border-color: var(--rule); background: var(--panel); }
+.mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The dot standing in for an empty mark is a target to aim at, not a status. */
+.mark span[aria-hidden] { color: var(--ink); }
+.mark:not(:hover):not(:focus-visible) span[aria-hidden]:only-child { color: var(--muted); }
+
+/* Something that happened to the register rather than to the entry form: a mark
+   refused because another window got there first (CO-3). */
+.notice {
+    margin: 0 0 1rem;
+    padding: .6rem .8rem;
+    background: var(--panel);
+    border-left: 3px solid var(--accent);
+}
+
 /* The entry form. It sits under the register and reads left to right in the
    order a paper register is filled in, with Payment and Deposit as the two
    money columns they are on paper. */

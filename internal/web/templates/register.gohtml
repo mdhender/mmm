@@ -7,6 +7,10 @@
         </p>
     </div>
 
+    {{- /* Replaced out of band when a change is refused, so a stale tab is told
+           rather than quietly corrected (CO-3). Empty the rest of the time. */ -}}
+    <div id="notice">{{if .Notice}}<p class="notice" role="alert">{{.Notice}}</p>{{end}}</div>
+
     {{if .Rows}}
         <table class="register">
             <caption class="visually-hidden">Transactions for {{.Account.Name}}, oldest first</caption>
@@ -23,45 +27,14 @@
             </tr>
             </thead>
             <tbody>
-            {{range .Rows}}
-                <tr id="txn-{{.ID}}">
-                    {{- /* A calendar date is shown exactly as it was entered. It
-                           carries no timezone and must not be shifted (ST-8, RG-5). */ -}}
-                    <td class="date">{{.Date}}</td>
-                    <td class="num">{{.CheckNumber}}</td>
-                    <td class="payee">{{.Payee}}</td>
-                    <td class="category{{if .Uncategorized}} muted{{end}}">{{.Category}}</td>
-                    <td class="memo">{{.Memo}}</td>
-                    <td class="money{{if .AmountNegative}} negative{{end}}">{{.Amount}}</td>
-                    <td class="status" title="{{.StatusLabel}}">{{.StatusMark}}</td>
-                    <td class="money{{if .BalanceNegative}} negative{{end}}">{{.Balance}}</td>
-                </tr>
-            {{end}}
+            {{range .Rows}}{{template "row" .}}{{end}}
             </tbody>
         </table>
     {{else}}
         <p class="empty">This register has no transactions yet.</p>
     {{end}}
 
-    {{- /* Both balances are shown, and the gap between them is named. The
-           difference is the point: it is what a reconciliation has to account
-           for, and hiding it would be manufacturing agreement (RC-1, RC-2). */ -}}
-    <dl class="totals">
-        <div>
-            <dt>Ending balance</dt>
-            <dd class="money{{if .EndingNegative}} negative{{end}}">{{.Ending}} {{.Currency}}</dd>
-        </div>
-        <div>
-            <dt>Cleared balance</dt>
-            <dd class="money">{{.Cleared}} {{.Currency}}</dd>
-        </div>
-        <div>
-            <dt>Not yet cleared</dt>
-            <dd class="money">{{.Uncleared}} {{.Currency}}
-                <span class="muted">({{.UnclearedCount}} transaction{{if ne .UnclearedCount 1}}s{{end}})</span>
-            </dd>
-        </div>
-    </dl>
+    {{template "totals" .}}
 
     {{- /* The entry form sits on the register, not behind another click: the
            register is the primary screen (RG-1). It is deliberately outside the
@@ -126,4 +99,75 @@
             Amounts are in {{.Currency}}, without a sign. A new entry is uncleared until the bank shows it.
         </p>
     </form>
+{{end}}
+
+{{- /* One register row. It is a template of its own because marking a
+       transaction cleared answers with this row alone, swapped in place, rather
+       than with the whole page. */ -}}
+{{define "row"}}
+    <tr id="txn-{{.ID}}">
+        {{- /* A calendar date is shown exactly as it was entered. It carries no
+               timezone and must not be shifted (ST-8, RG-5). */ -}}
+        <td class="date">{{.Date}}</td>
+        <td class="num">{{.CheckNumber}}</td>
+        <td class="payee">{{.Payee}}</td>
+        <td class="category{{if .Uncategorized}} muted{{end}}">{{.Category}}</td>
+        <td class="memo">{{.Memo}}</td>
+        <td class="money{{if .AmountNegative}} negative{{end}}">{{.Amount}}</td>
+        <td class="status" title="{{.StatusLabel}}">
+            {{if .Reconciled}}
+                {{- /* No control: a finished reconciliation is a fact, and the
+                       register does not rewrite it (RC-3). */ -}}
+                {{.StatusMark}}
+            {{else}}
+                {{- /* A real form, so the mark still works with no script at all:
+                       htmx intercepts it and swaps this row, and without htmx the
+                       browser posts it and the handler redirects to the register.
+                       The token goes back with the change, so a write from a tab
+                       that has gone stale is refused rather than applied (CO-3). */ -}}
+                <form method="post" action="/accounts/{{.AccountID}}/transactions/{{.ID}}/status"
+                      hx-post="/accounts/{{.AccountID}}/transactions/{{.ID}}/status"
+                      hx-target="#txn-{{.ID}}" hx-swap="outerHTML">
+                    <input type="hidden" name="status" value="{{.NextStatus}}">
+                    <input type="hidden" name="updated_at" value="{{.Token}}">
+                    <button type="submit" class="mark" title="{{.ActionLabel}}">
+                        <span aria-hidden="true">{{if .StatusMark}}{{.StatusMark}}{{else}}&middot;{{end}}</span>
+                        <span class="visually-hidden">{{.ActionLabel}}</span>
+                    </button>
+                </form>
+            {{end}}
+        </td>
+        <td class="money{{if .BalanceNegative}} negative{{end}}">{{.Balance}}</td>
+    </tr>
+{{end}}
+
+{{- /* Both balances are shown, and the gap between them is named. The difference
+       is the point: it is what a reconciliation has to account for, and hiding it
+       would be manufacturing agreement (RC-1, RC-2).
+
+       Marking a row cleared moves the cleared balance and the uncleared count
+       but not the ending balance, so the totals come back with the row as an
+       out-of-band swap and the two never disagree. */ -}}
+{{define "totals"}}
+    <dl class="totals" id="totals"{{if .OOB}} hx-swap-oob="true"{{end}}>
+        <div>
+            <dt>Ending balance</dt>
+            <dd class="money{{if .EndingNegative}} negative{{end}}">{{.Ending}} {{.Currency}}</dd>
+        </div>
+        <div>
+            <dt>Cleared balance</dt>
+            <dd class="money">{{.Cleared}} {{.Currency}}</dd>
+        </div>
+        <div>
+            <dt>Not yet cleared</dt>
+            <dd class="money">{{.Uncleared}} {{.Currency}}
+                <span class="muted">({{.UnclearedCount}} transaction{{if ne .UnclearedCount 1}}s{{end}})</span>
+            </dd>
+        </div>
+    </dl>
+{{end}}
+
+{{- /* The notice on its own, for an out-of-band swap. */ -}}
+{{define "notice"}}
+    <div id="notice" hx-swap-oob="true">{{if .Notice}}<p class="notice" role="alert">{{.Notice}}</p>{{end}}</div>
 {{end}}

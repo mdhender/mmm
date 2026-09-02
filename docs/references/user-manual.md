@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.11.1-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.12.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -22,11 +22,12 @@ It shows:
 It can:
 
 - enter a transaction into an account, with an optional category
+- mark a transaction cleared, and mark it not cleared again
 
 It does not create or edit accounts, change or delete transactions already entered, split a
-transaction among several categories, record a transfer between accounts, mark transactions
-cleared, reconcile, import, export, create backups, search, or produce reports. There is no
-terminal interface and no command-line subcommand.
+transaction among several categories, record a transfer between accounts, reconcile, import,
+export, create backups, search, or produce reports. There is no terminal interface and no
+command-line subcommand.
 
 ## Starting the program
 
@@ -39,7 +40,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.11.1-beta
+checkbook 0.12.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -167,6 +168,27 @@ release.
 
 Cleared and reconciled are separate facts and are not combined.
 
+### Marking a transaction cleared
+
+The mark in the status column is a button. Pressing it on an uncleared transaction marks it
+cleared; pressing it on a cleared transaction marks it uncleared again. A dot stands in for the
+empty mark, so there is something to aim at.
+
+Only that row and the totals change: the page is not reloaded and the position on it is kept.
+Marking a transaction cleared moves the cleared balance and the count of what is not yet cleared.
+It does not move the ending balance, which counts every transaction whatever its status.
+
+**A reconciled transaction has no button.** Reconciled is recorded by a completed reconciliation,
+and the register does not rewrite it.
+
+If the same account is open in more than one window, a mark made against a transaction that has
+since changed elsewhere is **refused, not applied**. The row is replaced with the transaction as
+it now stands and a message says what happened, so the two windows cannot silently overwrite each
+other. Mark it again if that is still what you want.
+
+The mark works without JavaScript. Each one is an ordinary form: with scripting available only the
+row is replaced, and without it the same press reloads the register.
+
 ### Amounts
 
 Amounts are exact. They are held as whole minor units of the account's currency — cents for USD —
@@ -244,7 +266,9 @@ contacts GitHub.
 | `/` | Redirects to the first account. If the database has no accounts, a page saying so. |
 | `/accounts/N` | The register for account `N`. Stable: an account's number is never reassigned. |
 | `POST /accounts/N/transactions` | Enters a transaction into account `N`. Answers with a redirect back to the register. |
+| `POST /accounts/N/transactions/M/status` | Marks transaction `M` cleared or uncleared. Answers with the row and the totals, or with a redirect when the request did not come from the page's script. |
 | `/static/app.css` | The stylesheet. |
+| `/static/htmx.min.js` | The script that replaces a single row. Served from this program; nothing is fetched from the internet. |
 
 Any other address returns a page reporting that the address is not served. A method an address
 does not accept — anything but `GET` on a register, anything but `POST` on the entry address — is
@@ -313,6 +337,8 @@ is on screen.
 | The database cannot be read | 500 |
 | An entry is refused; the register returns with the entry still in the form | 422 |
 | An entry is addressed to a closed account | 409 |
+| A mark arrives without the version of the transaction it was made against | 400 |
+| A mark is refused because the transaction changed in another window | 409, or the row and a message when the page's script made the request |
 
 Each of these pages states what happened and what to do next, and links back to the register.
 

@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repository is
 
 `mmm` is a local-first household **checkbook** written in Go. The repository is early. The
-storage layer, the domain packages behind the register, and a read-only web UI exist
-(`cmd/checkbook` serves it); entering, editing, importing, and reconciling do not. Much of the
-code written here is still creating the application rather than modifying it.
+storage layer, the domain packages behind the register, and a web UI exist (`cmd/checkbook` serves
+it). The register displays, takes new transactions, and marks them cleared; editing, splitting,
+transfers, importing, and reconciling do not exist yet. Much of the code written here is still
+creating the application rather than modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
 `RG-`, `RC-`, `IE-`, `BK-`, `CO-`, `PV-`, `TS-`, `RP-`, `SC-`). Check work against it and cite IDs
@@ -206,8 +207,9 @@ that load the same transaction and both save will have the second write silently
 first — WAL, connection pooling, and transactions all permit this, because each request is its own
 short transaction.
 
-CO-3 forbids that. **The schema now supports it; the handlers do not exist yet.** The token is
-`updated_at`, not a separate counter: read it with the record, then
+CO-3 forbids that. **`transaction.SetStatus` is the worked example** — marking a row cleared reads
+the token with the row, sends it back with the change, and refuses a write whose token has moved
+on. The token is `updated_at`, not a separate counter: read it with the record, then
 `UPDATE ... SET updated_at = ? WHERE id = ? AND updated_at = ?`. A stale tab matches no rows, so
 `Changes()` returns 0 and the caller must tell the user rather than retrying blindly.
 
@@ -324,10 +326,19 @@ HTML. No SQL and no balance arithmetic belong here.
 - **Every error page says what happened and what to do next** (RG-4). `Server.fail` takes both,
   and `errorPage.NextStep` is not optional — a page without it is a dead end. The catch-all
   `GET /` route exists so a mistyped address gets one of these instead of net/http's bare 404.
-- **There is no JavaScript yet, and no HTMX.** A read-only register is links, and a link already
-  does what a script would have to be written to do. HTMX comes in when there are interactions
-  that genuinely need part of a page replaced — marking a row cleared, editing in place — and it
-  will be a vendored file, never a CDN (PL-3, TS-4).
+- **HTMX is vendored at `static/htmx.min.js`** (2.0.4, 0BSD; provenance and hash in
+  `internal/web/htmx.md`). It arrived with marking a row cleared, the first interaction that
+  genuinely replaces part of a page: the answer is the one `<tr>` plus the totals as an
+  out-of-band swap, because clearing moves the cleared balance and the uncleared count but not the
+  ending balance. It is **never a CDN reference** (PL-3, TS-4). Entering a transaction is still a
+  plain POST and a redirect — a new row changes the running balance of every row below it, so
+  there is no fragment to swap.
+- **Every htmx control is a real form that works without it.** The handler answers a fragment when
+  `HX-Request` is set and a redirect otherwise, so the register keeps working if the script never
+  loads. Keep it that way rather than putting `hx-` attributes on a bare element.
+- **`register.gohtml` defines `row`, `totals`, and `notice`**, rendered both inside the page and
+  on their own. A change to a register row belongs in the `row` template, or a swapped-in row and
+  a reloaded page will disagree.
 - **Do not add authentication, sessions, or CSRF tokens** (PL-7).
 
 ## Constraints that override normal defaults

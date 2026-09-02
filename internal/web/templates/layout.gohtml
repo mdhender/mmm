@@ -14,6 +14,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{.Title}} &middot; Checkbook</title>
     <link rel="stylesheet" href="/static/app.css">
+    {{- /* htmx, vendored and served from loopback. It is never a CDN reference:
+           the register has to run with no network at all (PL-3, TS-4). See
+           internal/web/htmx.md for the version, hash, and licence.
+
+           Everything it drives is a real form that works without it. The script
+           makes marking a row cleared replace that row instead of the page; if
+           it fails to load, the same form posts and the page reloads. */ -}}
+    <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
 <header class="topbar">

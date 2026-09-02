@@ -392,3 +392,145 @@ func countRows(t *testing.T, store *storage.Store, table string) int64 {
 	}
 	return n
 }
+
+// TestSetStatusMarksCleared is the register's toggle: the bank has shown the
+// transaction, and nothing else about it changes.
+func TestSetStatusMarksCleared(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17")})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if txn.Status != transaction.Uncleared {
+		t.Fatalf("status = %q, want uncleared", txn.Status)
+	}
+
+	got, err := transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Cleared, txn.UpdatedAt)
+	if err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	if got.Status != transaction.Cleared {
+		t.Errorf("status = %q, want cleared", got.Status)
+	}
+	if !got.UpdatedAt.After(txn.UpdatedAt) {
+		t.Errorf("updated_at did not advance: %s then %s", txn.UpdatedAt, got.UpdatedAt)
+	}
+	if got.Amount.Decimal() != "-84.17" || got.Payee != "Riba Smith" || got.Date != "2026-08-14" {
+		t.Errorf("marking cleared changed something else: %+v", got)
+	}
+
+	// And back again: the mark is a toggle, not a one-way door.
+	back, err := transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Uncleared, got.UpdatedAt)
+	if err != nil {
+		t.Fatalf("SetStatus back: %v", err)
+	}
+	if back.Status != transaction.Uncleared {
+		t.Errorf("status = %q, want uncleared", back.Status)
+	}
+}
+
+// TestSetStatusRefusesStaleToken is CO-3 itself: two tabs, and the second write
+// is told rather than allowed to overwrite.
+func TestSetStatusRefusesStaleToken(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17")})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	stale := txn.UpdatedAt // what both tabs read
+
+	if _, err := transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Cleared, stale); err != nil {
+		t.Fatalf("first SetStatus: %v", err)
+	}
+
+	_, err = transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Uncleared, stale)
+	if !errors.Is(err, transaction.ErrConflict) {
+		t.Fatalf("second SetStatus err = %v, want transaction.ErrConflict", err)
+	}
+
+	// The first write stands. A refused write changes nothing.
+	reg, err := transaction.LoadRegister(ctx, store, acct)
+	if err != nil {
+		t.Fatalf("LoadRegister: %v", err)
+	}
+	if reg.Entries[0].Status != transaction.Cleared {
+		t.Errorf("status = %q, want cleared: the refused write was applied anyway", reg.Entries[0].Status)
+	}
+}
+
+// TestSetStatusRefusesReconciled: a finished reconciliation is a fact, and the
+// register does not rewrite it (RC-3).
+func TestSetStatusRefusesReconciled(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Acme Manufacturing", Amount: usd(t, "2480.16"), Status: transaction.Reconciled,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Uncleared, txn.UpdatedAt); !errors.Is(err, transaction.ErrReconciled) {
+		t.Fatalf("err = %v, want transaction.ErrReconciled", err)
+	}
+}
+
+// TestSetStatusRefusesReconciling: reconciled is recorded by a reconciliation,
+// never by the register's toggle.
+func TestSetStatusRefusesReconciling(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17")})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Reconciled, txn.UpdatedAt); !errors.Is(err, transaction.ErrInvalidStatus) {
+		t.Fatalf("err = %v, want transaction.ErrInvalidStatus", err)
+	}
+}
+
+// TestSetStatusUnchangedKeepsToken: setting the status it already has is not a
+// write. Burning a token would make every other open tab stale for no change.
+func TestSetStatusUnchangedKeepsToken(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17")})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Uncleared, txn.UpdatedAt)
+	if err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	if !got.UpdatedAt.Equal(txn.UpdatedAt) {
+		t.Errorf("updated_at moved on a no-op write: %s then %s", txn.UpdatedAt, got.UpdatedAt)
+	}
+}
+
+// TestSetStatusOtherAccount: the id comes from a URL, and a URL can be edited.
+func TestSetStatusOtherAccount(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	other, err := account.Create(ctx, store, account.New{Name: "Savings", Type: account.Savings, Currency: money.USD})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17")})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := transaction.SetStatus(ctx, store, other, txn.ID, transaction.Cleared, txn.UpdatedAt); !errors.Is(err, transaction.ErrNotFound) {
+		t.Fatalf("err = %v, want transaction.ErrNotFound", err)
+	}
+}
