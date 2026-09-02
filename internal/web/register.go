@@ -92,20 +92,20 @@ type registerRow struct {
 }
 
 // handleRoot sends the reader to an account, or explains that there are none.
-func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	accounts, err := account.List(r.Context(), s.store)
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request, cb *checkbook) {
+	accounts, err := account.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list accounts", "err", err)
-		s.fail(w, r, http.StatusInternalServerError, nil,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, nil,
 			"The account list could not be read",
-			"The database at "+s.store.Path()+" reported an error while listing accounts.",
+			"The database at "+cb.path+" reported an error while listing accounts.",
 			"Check that the file exists and is not open in another program, then reload this page. Your records are not changed by reading them.")
 		return
 	}
 
 	if len(accounts) == 0 {
 		s.render(w, r, http.StatusOK, "empty.gohtml",
-			struct{ layout }{s.pageLayout(r, "No accounts yet", nil, 0)})
+			struct{ layout }{s.pageLayout(r, cb, "No accounts yet", nil, 0)})
 		return
 	}
 
@@ -116,38 +116,38 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleNotFound answers an address the program does not serve.
-func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request, cb *checkbook) {
 	// The account list is fetched so the page still offers somewhere to go. A
 	// failure to read it is not worth a second error page here.
-	accounts, err := account.List(r.Context(), s.store)
+	accounts, err := account.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list accounts", "err", err)
 		accounts = nil
 	}
-	s.fail(w, r, http.StatusNotFound, accounts,
+	s.fail(w, r, cb, http.StatusNotFound, accounts,
 		"There is no page at that address",
 		"Nothing in the checkbook answers to "+r.URL.Path+".",
 		"Choose an account from the list on the left, or go back to the register.")
 }
 
 // handleRegister renders one account's register.
-func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	accounts, err := account.List(r.Context(), s.store)
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request, cb *checkbook) {
+	accounts, err := account.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list accounts", "err", err)
-		s.fail(w, r, http.StatusInternalServerError, nil,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, nil,
 			"The account list could not be read",
-			"The database at "+s.store.Path()+" reported an error while listing accounts.",
+			"The database at "+cb.path+" reported an error while listing accounts.",
 			"Check that the file exists and is not open in another program, then reload this page. Your records are not changed by reading them.")
 		return
 	}
 
-	acct, ok := s.accountFor(w, r, accounts)
+	acct, ok := s.accountFor(w, r, cb, accounts)
 	if !ok {
 		return
 	}
 
-	s.renderRegister(w, r, http.StatusOK, accounts, acct, blankEntryForm(), "")
+	s.renderRegister(w, r, cb, http.StatusOK, accounts, acct, blankEntryForm(), "")
 }
 
 // renderRegister reads acct's register and writes the page, carrying form and
@@ -156,11 +156,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 // Both the register handler and the entry handler end here, so a refused entry
 // comes back on the same page it was typed on, with the same balances, rather
 // than on a page of its own that would have to be kept in step with this one.
-func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status int, accounts []account.Account, acct account.Account, form entryForm, formError string) {
-	reg, err := transaction.LoadRegister(r.Context(), s.store, acct)
+func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, cb *checkbook, status int, accounts []account.Account, acct account.Account, form entryForm, formError string) {
+	reg, err := transaction.LoadRegister(r.Context(), cb.store, acct)
 	if err != nil {
 		s.log.Error("load register", "account", acct.Name, "err", err)
-		s.fail(w, r, http.StatusInternalServerError, accounts,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, accounts,
 			"The register could not be read",
 			"The transactions for "+acct.Name+" could not be listed, so no balance is shown. Showing a partial register would be worse than showing none.",
 			"Reload this page. If it keeps failing, restore your most recent backup.")
@@ -171,7 +171,7 @@ func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status i
 	// refusing a register the reader can otherwise use. It is logged and the box
 	// simply offers nothing; anything genuinely wrong with the database has
 	// already failed LoadRegister above.
-	categories, err := category.List(r.Context(), s.store)
+	categories, err := category.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list categories", "err", err)
 	}
@@ -180,7 +180,7 @@ func (s *Server) renderRegister(w http.ResponseWriter, r *http.Request, status i
 		names = append(names, c.Name)
 	}
 
-	page := buildRegisterPage(s.pageLayout(r, acct.Name, accounts, acct.ID), reg)
+	page := buildRegisterPage(s.pageLayout(r, cb, acct.Name, accounts, acct.ID), reg)
 	page.Form = form
 	page.FormError = formError
 	page.Categories = names

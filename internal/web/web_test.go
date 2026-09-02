@@ -33,10 +33,25 @@ func open(t *testing.T) *storage.Store {
 // exercise failures on purpose and the noise is not the subject.
 func server(t *testing.T, store *storage.Store) http.Handler {
 	t.Helper()
-	s, err := web.New(store, "0.0.0-test", slog.New(slog.DiscardHandler))
+	return newServer(t, web.Options{Store: store})
+}
+
+// newServer builds a server with whatever options the test is about, filling in
+// the ones every test wants the same way.
+func newServer(t *testing.T, opts web.Options) *web.Server {
+	t.Helper()
+
+	opts.Version = "0.0.0-test"
+	if opts.Log == nil {
+		opts.Log = slog.New(slog.DiscardHandler)
+	}
+	s, err := web.New(opts)
 	if err != nil {
 		t.Fatalf("web.New: %v", err)
 	}
+	// The store a test hands in is closed by the server, and closing it twice
+	// reports "already closed". Whoever gets there first wins.
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 

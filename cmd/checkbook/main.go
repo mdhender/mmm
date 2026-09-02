@@ -153,11 +153,22 @@ func run() (browserOpened bool, err error) {
 		// Pool.Close blocks until every borrowed connection is returned, so this
 		// must run after the server has finished its in-flight requests. The
 		// shutdown below does that before returning.
-		defer store.Close()
-
-		if handler, err = web.New(store, version.Short(), log); err != nil {
+		//
+		// It closes the server's checkbook rather than this store, because the
+		// store the program started with may not be the one it ends with: the
+		// register can be closed and another opened from the browser.
+		ui, err := web.New(web.Options{
+			Store:   store,
+			Open:    browserOpener(log),
+			Version: version.Short(),
+			Log:     log,
+		})
+		if err != nil {
+			store.Close()
 			return false, err
 		}
+		defer ui.Close()
+		handler = ui
 	}
 
 	srv := &http.Server{
@@ -234,6 +245,30 @@ func databaseName(path string, demo bool) string {
 		return demoDatabase
 	}
 	return path
+}
+
+// browserOpener lets the browser open another checkbook without restarting the
+// program.
+//
+// It is a function passed to web rather than something web does for itself,
+// because seeding the sample household exists only in this command and the
+// wording ST-6 asks for when a folder is missing is openStore's. The path is
+// made absolute here: the program may have been started from anywhere, and a
+// relative path typed into a browser box is a path relative to a working
+// directory the reader cannot see.
+func browserOpener(log *slog.Logger) web.Opener {
+	return func(ctx context.Context, req web.OpenRequest) (*storage.Store, error) {
+		path := req.Path
+		if !req.Demo {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", path, err)
+			}
+			path = abs
+		}
+		log.Info("opening a checkbook", "path", path, "demo", req.Demo)
+		return openStore(ctx, path, req.Demo)
+	}
 }
 
 // openStore opens the database, or builds the in-memory sample when demo is set.

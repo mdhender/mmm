@@ -176,18 +176,18 @@ func parseEntryAmount(text, box string, cur money.Currency) (money.Money, string
 // be on screen afterwards), and the redirect is what keeps a reload from
 // entering the transaction twice. A silently duplicated transaction is exactly
 // the kind of quiet loss that costs a register its credibility (SC-4).
-func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request) {
-	accounts, err := account.List(r.Context(), s.store)
+func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request, cb *checkbook) {
+	accounts, err := account.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list accounts", "err", err)
-		s.fail(w, r, http.StatusInternalServerError, nil,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, nil,
 			"The account list could not be read",
-			"The database at "+s.store.Path()+" reported an error while listing accounts, so the entry was not written.",
+			"The database at "+cb.path+" reported an error while listing accounts, so the entry was not written.",
 			"Check that the file exists and is not open in another program, then go back and enter it again. Nothing was recorded.")
 		return
 	}
 
-	acct, ok := s.accountFor(w, r, accounts)
+	acct, ok := s.accountFor(w, r, cb, accounts)
 	if !ok {
 		return
 	}
@@ -195,7 +195,7 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 	if acct.IsClosed() {
 		// A closed account is a finished record. Reopening it is a decision, not
 		// a side effect of typing into a form that happened to still be on screen.
-		s.fail(w, r, http.StatusConflict, accounts,
+		s.fail(w, r, cb, http.StatusConflict, accounts,
 			"That account is closed",
 			acct.Name+" was closed on "+acct.ClosedOn+", so no entry was written to it.",
 			"Choose an open account from the list on the left. If this entry belongs to "+acct.Name+", the account has to be reopened first.")
@@ -203,7 +203,7 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := r.ParseForm(); err != nil {
-		s.fail(w, r, http.StatusBadRequest, accounts,
+		s.fail(w, r, cb, http.StatusBadRequest, accounts,
 			"That entry could not be read",
 			"The browser sent a form this program could not decode, so nothing was written.",
 			"Go back to the register and enter it again.")
@@ -216,15 +216,15 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 	if problem != "" {
 		// 422: the request was well formed and understood, and refused on its
 		// contents. The page comes back with the entry still in it.
-		s.renderRegister(w, r, http.StatusUnprocessableEntity, accounts, acct, form, problem)
+		s.renderRegister(w, r, cb, http.StatusUnprocessableEntity, accounts, acct, form, problem)
 		return
 	}
 
 	if ent.Category != "" {
-		cat, err := category.Ensure(r.Context(), s.store, ent.Category)
+		cat, err := category.Ensure(r.Context(), cb.store, ent.Category)
 		if err != nil {
 			s.log.Error("ensure category", "name", ent.Category, "err", err)
-			s.fail(w, r, http.StatusInternalServerError, accounts,
+			s.dbFailed(w, r, cb, http.StatusInternalServerError, accounts,
 				"That category could not be recorded",
 				"The database reported an error while looking up the category "+ent.Category+", so the entry was not written.",
 				"Go back to the register and enter it again. Nothing was recorded.")
@@ -235,7 +235,7 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 		ent.New.Splits = []transaction.Split{{CategoryID: cat.ID, Amount: ent.New.Amount}}
 	}
 
-	txn, err := transaction.Create(r.Context(), s.store, acct, ent.New)
+	txn, err := transaction.Create(r.Context(), cb.store, acct, ent.New)
 	if err != nil {
 		// The form already refused everything below, so reaching one of these
 		// means the two disagree. Say so on the form rather than as a 500: the
@@ -245,12 +245,12 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 			errors.Is(err, transaction.ErrSplitTotal) ||
 			errors.Is(err, money.ErrCurrencyMismatch) {
 			s.log.Error("create transaction refused after the form accepted it", "account", acct.Name, "err", err)
-			s.renderRegister(w, r, http.StatusUnprocessableEntity, accounts, acct, form,
+			s.renderRegister(w, r, cb, http.StatusUnprocessableEntity, accounts, acct, form,
 				"That entry was refused when it was written, and nothing was recorded. Check the date and the amount, then press Add again.")
 			return
 		}
 		s.log.Error("create transaction", "account", acct.Name, "err", err)
-		s.fail(w, r, http.StatusInternalServerError, accounts,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, accounts,
 			"That entry could not be written",
 			"The database reported an error while writing to "+acct.Name+". The entry and its category were written together or not at all, so the register is not half-changed.",
 			"Reload the register to see whether it arrived. If it did not, enter it again; if the error repeats, restore your most recent backup.")
@@ -266,29 +266,29 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request)
 // accountFor reads the account named by the request path, writing the error page
 // itself if there is not one. The register and the entry handler answer a bad id
 // identically, and answering it in two places is how they would drift apart.
-func (s *Server) accountFor(w http.ResponseWriter, r *http.Request, accounts []account.Account) (account.Account, bool) {
+func (s *Server) accountFor(w http.ResponseWriter, r *http.Request, cb *checkbook, accounts []account.Account) (account.Account, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		s.fail(w, r, http.StatusNotFound, accounts,
+		s.fail(w, r, cb, http.StatusNotFound, accounts,
 			"That is not an account address",
 			"The address "+r.URL.Path+" does not name an account. An account address looks like /accounts/1.",
 			"Choose an account from the list on the left.")
 		return account.Account{}, false
 	}
 
-	acct, err := account.Get(r.Context(), s.store, id)
+	acct, err := account.Get(r.Context(), cb.store, id)
 	if err != nil {
 		if errors.Is(err, account.ErrNotFound) {
 			// Ids are never reused (ST-9), so a missing one means the account was
 			// deleted, not that it turned into a different account. Say so.
-			s.fail(w, r, http.StatusNotFound, accounts,
+			s.fail(w, r, cb, http.StatusNotFound, accounts,
 				"No such account",
 				"There is no account numbered "+strconv.FormatInt(id, 10)+" in this database. A bookmark or an open tab may be pointing at an account that was removed.",
 				"Choose an account from the list on the left.")
 			return account.Account{}, false
 		}
 		s.log.Error("get account", "id", id, "err", err)
-		s.fail(w, r, http.StatusInternalServerError, accounts,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, accounts,
 			"That account could not be read",
 			"The database reported an error while reading account "+strconv.FormatInt(id, 10)+".",
 			"Reload this page. If it keeps failing, open the database file with another SQLite tool to check it, and restore your most recent backup if it is damaged.")

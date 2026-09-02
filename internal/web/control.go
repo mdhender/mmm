@@ -46,7 +46,7 @@ func (s *Server) control(h http.HandlerFunc) http.HandlerFunc {
 				"path", r.URL.Path,
 				"origin", r.Header.Get("Origin"),
 				"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"))
-			s.fail(w, r, http.StatusForbidden, nil,
+			s.fail(w, r, s.currentCheckbook(), http.StatusForbidden, nil,
 				controlRefusedHeading, controlRefusedDetail, controlRefusedStep)
 			return
 		}

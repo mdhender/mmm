@@ -106,6 +106,7 @@ a { color: var(--accent); }
     color: var(--accent);
     cursor: pointer;
 }
+.checkbook-actions a.action { display: block; text-decoration: none; }
 .checkbook-actions .action:hover { background: var(--panel); }
 .checkbook-actions .action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -216,12 +217,26 @@ td.memo, td.payee, td.category { overflow-wrap: anywhere; }
 .f-num input { width: 4.5rem; }
 .f-payee input, .f-category input, .f-memo input { width: 11rem; }
 .f-name input { width: 14rem; }
+.f-path input { width: 26rem; max-width: 100%; }
 .f-opening input { width: 9rem; }
 
 /* The new-account form is a page of its own rather than a strip under a table,
    so it does not need the register's rule above it. */
 .account-form { margin: 0; padding-top: 0; border-top: none; max-width: 56rem; }
 .cta { font-weight: 600; }
+
+/* A button that stands on its own rather than at the end of a row of fields:
+   Back up now on the no-checkbook page, and Open the sample household. */
+.cta-button {
+    font: inherit;
+    margin: .25rem 0 0;
+    padding: .35rem 1.1rem;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--paper);
+    cursor: pointer;
+}
+.cta-button:hover { background: var(--ink); border-color: var(--ink); }
 .entry-fields button {
     font: inherit;
     padding: .35rem 1.1rem;

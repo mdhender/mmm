@@ -75,32 +75,48 @@ func allDigits(s string) bool {
 
 // handleBackup writes a verified copy of the database beside it (BK-2, BK-5).
 //
-// It is a control route: it acts on the file rather than on a record, so it is
-// wrapped by control and reached only by POST from a page this program served.
+// It is a control route and takes no lease. It does not need one: backup.Create
+// works from a path on a connection it opens itself, which is what lets the same
+// action copy the checkbook that is open and the one that has just been closed
+// -- the offer on the page the reader lands on after closing, and the point of
+// being able to close one at all.
 func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	cb := s.currentCheckbook()
+
 	if err := r.ParseForm(); err != nil {
-		s.fail(w, r, http.StatusBadRequest, nil,
+		s.fail(w, r, cb, http.StatusBadRequest, s.accountList(r, cb),
 			"That request could not be read",
 			"The browser sent a form this program could not decode, so no backup was written.",
-			"Go back to the register and press Back up now again.")
+			"Go back and press Back up now again.")
 		return
 	}
 	back := safeReturn(r.PostForm.Get("return"))
 
-	path := s.store.Path()
-	if s.store.IsMemory() {
+	path, inMemory := "", false
+	if cb != nil {
+		path, inMemory = cb.path, cb.inMemory
+	} else {
+		path, inMemory = s.closedCheckbook()
+	}
+
+	switch {
+	case path == "":
+		s.renderNoCheckbook(w, r, http.StatusConflict,
+			"There is no checkbook to back up. This program has not had one open since it started.")
+		return
+	case inMemory:
 		// -demo has nothing on disk to copy. Writing sample data into the
 		// household's folder under a backup's name would be worse than refusing.
-		s.fail(w, r, http.StatusConflict, s.accountList(r),
+		s.backupRefused(w, r, cb, http.StatusConflict,
 			"There is nothing here to back up",
-			"This register is the sample household, held in memory. It is discarded when the program stops, and there is no file behind it to copy.",
+			"That register is the sample household, held in memory. It is discarded when the program stops, and there is no file behind it to copy.",
 			"Start the program on your own checkbook to back it up. Nothing was written.")
 		return
 	}
 
 	res, err := backup.Create(r.Context(), path, filepath.Dir(path))
 	if err != nil {
-		s.backupFailed(w, r, path, err)
+		s.backupFailed(w, r, cb, path, err)
 		return
 	}
 	s.log.Info("backup written", "path", res.Path, "bytes", res.Bytes)
@@ -110,16 +126,26 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, back+"?"+backedUpParam+"="+filepath.Base(res.Path), http.StatusSeeOther)
 }
 
-// backupFailed answers a backup that did not happen.
+// backupRefused answers a backup that did not happen, on whichever page the
+// reader has: the ordinary error page when a checkbook is open, and the
+// no-checkbook page when there is none to frame one with.
+func (s *Server) backupRefused(w http.ResponseWriter, r *http.Request, cb *checkbook, status int, heading, detail, nextStep string) {
+	if cb == nil {
+		s.renderNoCheckbook(w, r, status, detail+" "+nextStep)
+		return
+	}
+	s.fail(w, r, cb, status, s.accountList(r, cb), heading, detail, nextStep)
+}
+
+// backupFailed answers a backup that could not be written.
 //
 // Every branch says the same thing first: nothing was written under a backup's
 // name. A household that has just been told a backup failed needs to know
 // whether there is now a file they might mistake for one.
-func (s *Server) backupFailed(w http.ResponseWriter, r *http.Request, path string, err error) {
-	accounts := s.accountList(r)
+func (s *Server) backupFailed(w http.ResponseWriter, r *http.Request, cb *checkbook, path string, err error) {
 	switch {
 	case errors.Is(err, backup.ErrMissingDirectory):
-		s.fail(w, r, http.StatusConflict, accounts,
+		s.backupRefused(w, r, cb, http.StatusConflict,
 			"The folder holding your checkbook is gone",
 			"The backup goes beside the database, and "+filepath.Dir(path)+" no longer exists. No backup was written.",
 			"Check the disk the checkbook is on, then press Back up now again.")
@@ -128,14 +154,14 @@ func (s *Server) backupFailed(w http.ResponseWriter, r *http.Request, path strin
 		// BK-5: a file was written and it would not reopen. That is worth
 		// saying plainly -- it is a fact about the records, not about the copy.
 		s.log.Error("backup could not be verified", "database", path, "err", err)
-		s.fail(w, r, http.StatusInternalServerError, accounts,
+		s.backupRefused(w, r, cb, http.StatusInternalServerError,
 			"The copy could not be read back",
 			"A copy of "+path+" was made and then would not reopen as a checkbook, so it was removed rather than left looking like a backup. This usually means the database itself is damaged.",
 			"Restore your most recent good backup and open that copy. Keep the current file: it is what shows what went wrong.")
 
 	default:
 		s.log.Error("backup", "database", path, "err", err)
-		s.fail(w, r, http.StatusInternalServerError, accounts,
+		s.backupRefused(w, r, cb, http.StatusInternalServerError,
 			"The backup could not be written",
 			"The program could not write a copy of "+path+". Nothing was written under a backup's name.",
 			"Check that the disk is not full and that the folder can be written to, then press Back up now again.")
@@ -175,8 +201,11 @@ func safeReturn(v string) string {
 // accountList reads the accounts for a page that has already failed at something
 // else. A second failure here is not worth a second error page: the page simply
 // offers no list.
-func (s *Server) accountList(r *http.Request) []account.Account {
-	accounts, err := account.List(r.Context(), s.store)
+func (s *Server) accountList(r *http.Request, cb *checkbook) []account.Account {
+	if cb == nil {
+		return nil
+	}
+	accounts, err := account.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list accounts", "err", err)
 		return nil

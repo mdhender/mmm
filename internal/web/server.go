@@ -15,12 +15,14 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/mdhender/mmm/internal/account"
 	"github.com/mdhender/mmm/internal/storage"
@@ -32,23 +34,92 @@ var templateFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
+// OpenRequest names a checkbook to open.
+type OpenRequest struct {
+	// Path is the database file. It is ignored when Demo is set.
+	Path string
+
+	// Demo asks for the sample household, held in memory.
+	Demo bool
+}
+
+// Opener opens a checkbook on behalf of a request.
+//
+// It is injected rather than written here because this package must not learn
+// about flags or about seeding sample data: seedDemo exists only in the command,
+// and openStore owns the wording ST-6 asks for when a directory is missing. A
+// nil Opener means the program cannot open a checkbook from the browser, and the
+// route is not registered at all.
+//
+// Passing a request's context to an Opener is safe: storage.Open uses it for one
+// pool.Get, and Put clears the interrupt, so no finished request's cancellation
+// is left wired into a long-lived pool.
+type Opener func(ctx context.Context, req OpenRequest) (*storage.Store, error)
+
+// Options is what a Server is built from.
+type Options struct {
+	// Store is the checkbook to start with. It may be nil, in which case the
+	// program starts with nothing open and says so.
+	Store *storage.Store
+
+	// Open opens another one. Nil withholds the action rather than offering it
+	// and then failing.
+	Open Opener
+
+	// Quit ends the program. Nil withholds it, for the same reason.
+	Quit func()
+
+	// Version is shown in the footer, so a bug report can say which build
+	// produced a page.
+	Version string
+
+	Log *slog.Logger
+}
+
 // Server serves the register. It is safe for concurrent use: the household may
 // well have several tabs open on the same account.
+//
+// The checkbook it serves is not fixed. It can be closed from the browser and
+// another opened without restarting the program, which is what makes a backup
+// something a household can take, verify and restore without finding a terminal.
+// See checkbook.go for how a request holds one open.
 type Server struct {
-	store   *storage.Store
+	// mu guards current and the generation counter, and is held only long enough
+	// to read a pointer or swap one. It is never held across a request.
+	mu      sync.RWMutex
+	current *checkbook
+	gen     uint64
+
+	// closedPath is the database that was closed most recently. It outlives the
+	// checkbook so the page the reader lands on can name the file and say it is
+	// now safe to copy -- which is the whole point of being able to close one.
+	closedPath     string
+	closedInMemory bool
+
+	// ctl serializes Open against Close. It is never taken by a request that
+	// reads the register, so opening a large database -- migrations and all --
+	// blocks another control action and nothing else.
+	ctl sync.Mutex
+
+	open    Opener
+	quit    func()
 	version string
 	log     *slog.Logger
 
 	mux   *http.ServeMux
 	pages map[string]*template.Template
+
+	// noCheckbook is parsed on its own, like the problem page: it is not built
+	// on the layout and so cannot live in pages.
+	noCheckbook *template.Template
 }
 
-// New builds a server over store. version is shown in the footer so a bug report
-// can say which build produced a page.
+// New builds a server.
 //
 // Templates are parsed once, here, so a broken template fails at startup rather
 // than in the middle of rendering somebody's register.
-func New(store *storage.Store, version string, log *slog.Logger) (*Server, error) {
+func New(opts Options) (*Server, error) {
+	log := opts.Log
 	if log == nil {
 		log = slog.Default()
 	}
@@ -57,41 +128,86 @@ func New(store *storage.Store, version string, log *slog.Logger) (*Server, error
 	if err != nil {
 		return nil, err
 	}
+	noCheckbook, err := template.New(noCheckbookFile).ParseFS(templateFS, "templates/"+noCheckbookFile)
+	if err != nil {
+		return nil, fmt.Errorf("web: parse %s: %w", noCheckbookFile, err)
+	}
 
 	s := &Server{
-		store:   store,
-		version: version,
+		open:    opts.Open,
+		quit:    opts.Quit,
+		version: opts.Version,
 		log:     log,
 		mux:     http.NewServeMux(),
 		pages:   pages,
+
+		noCheckbook: noCheckbook,
+	}
+	if opts.Store != nil {
+		s.adopt(opts.Store)
 	}
 	s.routes()
 	return s, nil
+}
+
+// Close closes whatever checkbook is open, waiting for the requests using it.
+//
+// It is what the command defers in place of store.Close: the store the program
+// started with may not be the one it ends with.
+func (s *Server) Close() error {
+	cb, ok := s.retire(0)
+	if !ok {
+		return nil
+	}
+	return s.closeRetired(cb)
 }
 
 // routes registers the handlers.
 //
 // The patterns name their method, so anything but GET on a register URL gets a
 // 405 from the mux rather than a handler that has to check.
+//
+// Everything that reads or writes records goes through withCheckbook, which
+// leases the open checkbook for the length of the request. The routes that are
+// deliberately not wrapped are the ones that have to work when there is no
+// checkbook to lease, or that must not wait for one: /checkbook and its two
+// actions, /backup (which takes a path, and can copy the file just closed),
+// /quit, and the static files.
+//
+// Middleware around the mux would be the wrong tool for the same job: it would
+// need a second, string-matching copy of the routing table, living away from
+// here and free to drift.
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /{$}", s.handleRoot)
+	s.mux.HandleFunc("GET /{$}", s.withCheckbook(s.handleRoot))
 	// More specific than /accounts/{id}, so ServeMux prefers it and an account
 	// can never be numbered "new".
-	s.mux.HandleFunc("GET /accounts/new", s.handleNewAccount)
-	s.mux.HandleFunc("POST /accounts", s.handleCreateAccount)
-	s.mux.HandleFunc("GET /accounts/{id}", s.handleRegister)
+	s.mux.HandleFunc("GET /accounts/new", s.withCheckbook(s.handleNewAccount))
+	s.mux.HandleFunc("POST /accounts", s.withCheckbook(s.handleCreateAccount))
+	s.mux.HandleFunc("GET /accounts/{id}", s.withCheckbook(s.handleRegister))
 	// The entry has its own address rather than a POST to the register's, so an
 	// unmatched method on a register URL still gets a 405 from the mux.
-	s.mux.HandleFunc("POST /accounts/{id}/transactions", s.handleCreateTransaction)
-	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}/status", s.handleSetStatus)
-	// A control route: it acts on the file rather than on a record, so it is
-	// POST only and goes through the same-origin check in control.go.
+	s.mux.HandleFunc("POST /accounts/{id}/transactions", s.withCheckbook(s.handleCreateTransaction))
+	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}/status", s.withCheckbook(s.handleSetStatus))
+
+	// The control routes. They act on the file or on the program rather than on
+	// a record, so they are POST only and go through the same-origin check in
+	// control.go. None of them takes a lease: a closer that waited for itself
+	// would never finish.
+	s.mux.HandleFunc("GET /checkbook", s.handleCheckbook)
+	s.mux.HandleFunc("GET /checkbook/close", s.withCheckbook(s.handleConfirmClose))
+	s.mux.HandleFunc("POST /checkbook/close", s.control(s.handleClose))
 	s.mux.HandleFunc("POST /backup", s.control(s.handleBackup))
+	if s.open != nil {
+		s.mux.HandleFunc("POST /checkbook/open", s.control(s.handleOpen))
+	}
+
 	// The catch-all is last in precedence, not in registration: ServeMux picks
 	// the most specific pattern. It exists so a mistyped address gets a page
 	// that says what to do next rather than net/http's bare "404 page not
-	// found" (SPECIFICATION.md RG-4).
-	s.mux.HandleFunc("GET /", s.handleNotFound)
+	// found" (SPECIFICATION.md RG-4). It is wrapped too, so a mistyped address
+	// with nothing open gets the no-checkbook page rather than a 404 that
+	// offers a list of accounts nobody can read.
+	s.mux.HandleFunc("GET /", s.withCheckbook(s.handleNotFound))
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -118,9 +234,12 @@ func parsePages() (map[string]*template.Template, error) {
 	pages := make(map[string]*template.Template)
 	for _, name := range names {
 		base := name[len("templates/"):]
-		// The layout is not a page, and the problem page is not built on the
-		// layout: see problem.gohtml for why it stands alone.
-		if base == layoutFile || base == problemFile {
+		// The layout is not a page, and two pages are not built on the layout:
+		// see problem.gohtml for why they stand alone. Leaving one out of this
+		// list would parse it against the layout, where it defines no "main"
+		// and fails at render time -- which is exactly what parsing here at
+		// startup exists to prevent.
+		if base == layoutFile || base == problemFile || base == noCheckbookFile {
 			continue
 		}
 		t, err := template.New(layoutFile).ParseFS(templateFS, "templates/"+layoutFile, name)
@@ -130,7 +249,7 @@ func parsePages() (map[string]*template.Template, error) {
 		pages[base] = t
 	}
 
-	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml", "new-account.gohtml"} {
+	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml", "new-account.gohtml", "close-checkbook.gohtml"} {
 		if pages[required] == nil {
 			return nil, fmt.Errorf("web: missing template %s", required)
 		}
@@ -144,6 +263,11 @@ const (
 	// problemFile is rendered by NewProblem when there is no database to serve a
 	// register from. It is parsed on its own, not with the layout.
 	problemFile = "problem.gohtml"
+
+	// noCheckbookFile is rendered when the checkbook has been closed. It stands
+	// alone for the same reason problemFile does: the layout frames a page with
+	// the account list and the database path, and there is neither.
+	noCheckbookFile = "no-checkbook.gohtml"
 )
 
 // layout is the part of a page that does not depend on which page it is. Every
@@ -161,6 +285,15 @@ type layout struct {
 	// Accounts fills the account list, and ActiveID marks the one being read.
 	Accounts []account.Account
 	ActiveID int64
+
+	// Open says whether there is a checkbook behind this page. A control route
+	// can render one when there is not.
+	Open bool
+
+	// Generation identifies the open checkbook, and goes back with Close so a
+	// button pressed in a tab older than the current checkbook is refused
+	// rather than applied to a database it was never looking at (CO-3).
+	Generation uint64
 
 	// ReturnTo is the address a control action sends the reader back to: the
 	// page they were on when they pressed it. It is only ever a page they could
@@ -185,17 +318,25 @@ type layout struct {
 // pageLayout builds the frame every page shares. It is one function so that a
 // new page cannot quietly omit the database it is editing (BK-3) or the mark
 // that says the database is a temporary one.
-func (s *Server) pageLayout(r *http.Request, title string, accounts []account.Account, activeID int64) layout {
-	return layout{
-		Title:     title,
-		Database:  s.store.Path(),
-		Version:   s.version,
-		Accounts:  accounts,
-		ActiveID:  activeID,
-		ReturnTo:  returnTo(r),
-		Notice:    noticeFor(r),
-		Ephemeral: s.store.IsMemory(),
+// cb may be nil: a control route can render a page with nothing open, and
+// "No checkbook open" is still an answer to the question BK-3 asks.
+func (s *Server) pageLayout(r *http.Request, cb *checkbook, title string, accounts []account.Account, activeID int64) layout {
+	l := layout{
+		Title:    title,
+		Database: "No checkbook open",
+		Version:  s.version,
+		Accounts: accounts,
+		ActiveID: activeID,
+		ReturnTo: returnTo(r),
+		Notice:   noticeFor(r),
 	}
+	if cb != nil {
+		l.Database = cb.path
+		l.Ephemeral = cb.inMemory
+		l.Generation = cb.gen
+		l.Open = true
+	}
+	return l
 }
 
 // render writes a page, or an error page if the template fails.
@@ -242,10 +383,11 @@ type errorPage struct {
 }
 
 // fail renders an error page. accounts may be nil when the failure was reading
-// them; the layout copes.
-func (s *Server) fail(w http.ResponseWriter, r *http.Request, status int, accounts []account.Account, heading, detail, nextStep string) {
+// them, and cb may be nil when there is no checkbook open; the layout copes with
+// both.
+func (s *Server) fail(w http.ResponseWriter, r *http.Request, cb *checkbook, status int, accounts []account.Account, heading, detail, nextStep string) {
 	s.render(w, r, status, "error.gohtml", errorPage{
-		layout:   s.pageLayout(r, heading, accounts, 0),
+		layout:   s.pageLayout(r, cb, heading, accounts, 0),
 		Heading:  heading,
 		Detail:   detail,
 		NextStep: nextStep,

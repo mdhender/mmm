@@ -155,37 +155,37 @@ func parseOpeningBalance(text string, cur money.Currency) (money.Money, string) 
 }
 
 // handleNewAccount shows the form for a new account.
-func (s *Server) handleNewAccount(w http.ResponseWriter, r *http.Request) {
-	accounts, err := account.List(r.Context(), s.store)
+func (s *Server) handleNewAccount(w http.ResponseWriter, r *http.Request, cb *checkbook) {
+	accounts, err := account.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list accounts", "err", err)
-		s.fail(w, r, http.StatusInternalServerError, nil,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, nil,
 			"The account list could not be read",
-			"The database at "+s.store.Path()+" reported an error while listing accounts.",
+			"The database at "+cb.path+" reported an error while listing accounts.",
 			"Check that the file exists and is not open in another program, then reload this page. Your records are not changed by reading them.")
 		return
 	}
 
-	s.renderNewAccount(w, r, http.StatusOK, accounts, blankAccountForm(accounts), "")
+	s.renderNewAccount(w, r, cb, http.StatusOK, accounts, blankAccountForm(accounts), "")
 }
 
 // handleCreateAccount writes one account and sends the reader to its register.
 //
 // It answers with a redirect for the same reason entering a transaction does: a
 // reload then re-reads the register rather than creating a second account.
-func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
-	accounts, err := account.List(r.Context(), s.store)
+func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request, cb *checkbook) {
+	accounts, err := account.List(r.Context(), cb.store)
 	if err != nil {
 		s.log.Error("list accounts", "err", err)
-		s.fail(w, r, http.StatusInternalServerError, nil,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, nil,
 			"The account list could not be read",
-			"The database at "+s.store.Path()+" reported an error while listing accounts, so the account was not created.",
+			"The database at "+cb.path+" reported an error while listing accounts, so the account was not created.",
 			"Check that the file exists and is not open in another program, then go back and fill the form in again. Nothing was recorded.")
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		s.fail(w, r, http.StatusBadRequest, accounts,
+		s.fail(w, r, cb, http.StatusBadRequest, accounts,
 			"That form could not be read",
 			"The browser sent a form this program could not decode, so no account was created.",
 			"Go back and fill it in again.")
@@ -196,13 +196,13 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	// in the query string cannot stand in for a field.
 	n, form, problem := parseAccountForm(r.PostForm)
 	if problem != "" {
-		s.renderNewAccount(w, r, http.StatusUnprocessableEntity, accounts, form, problem)
+		s.renderNewAccount(w, r, cb, http.StatusUnprocessableEntity, accounts, form, problem)
 		return
 	}
 
-	acct, err := account.Create(r.Context(), s.store, n)
+	acct, err := account.Create(r.Context(), cb.store, n)
 	if err != nil {
-		s.createAccountFailed(w, r, accounts, form, err)
+		s.createAccountFailed(w, r, cb, accounts, form, err)
 		return
 	}
 
@@ -218,10 +218,10 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 // with what they typed still in it. Everything else below is a rule the form
 // already checked, which means the two disagree: it is logged and reported on
 // the form rather than as a 500, because the reader can still act on it.
-func (s *Server) createAccountFailed(w http.ResponseWriter, r *http.Request, accounts []account.Account, form accountForm, err error) {
+func (s *Server) createAccountFailed(w http.ResponseWriter, r *http.Request, cb *checkbook, accounts []account.Account, form accountForm, err error) {
 	switch {
 	case errors.Is(err, account.ErrDuplicateName):
-		s.renderNewAccount(w, r, http.StatusUnprocessableEntity, accounts, form, fmt.Sprintf(
+		s.renderNewAccount(w, r, cb, http.StatusUnprocessableEntity, accounts, form, fmt.Sprintf(
 			"There is already an account called %q, and names are compared without regard to case. Choose a different name, then press Create again. Nothing was recorded.", form.Name))
 
 	case errors.Is(err, account.ErrMissingName),
@@ -229,12 +229,12 @@ func (s *Server) createAccountFailed(w http.ResponseWriter, r *http.Request, acc
 		errors.Is(err, money.ErrCurrencyMismatch),
 		errors.Is(err, money.ErrInvalidCurrency):
 		s.log.Error("create account refused after the form accepted it", "name", form.Name, "err", err)
-		s.renderNewAccount(w, r, http.StatusUnprocessableEntity, accounts, form,
+		s.renderNewAccount(w, r, cb, http.StatusUnprocessableEntity, accounts, form,
 			"That account was refused when it was written, and nothing was recorded. Check the name, the kind, and the opening balance, then press Create again.")
 
 	default:
 		s.log.Error("create account", "name", form.Name, "err", err)
-		s.fail(w, r, http.StatusInternalServerError, accounts,
+		s.dbFailed(w, r, cb, http.StatusInternalServerError, accounts,
 			"That account could not be written",
 			"The database reported an error while creating "+form.Name+".",
 			"Reload the account list to see whether it arrived. If it did not, fill the form in again; if the error repeats, restore your most recent backup.")
@@ -246,9 +246,9 @@ func (s *Server) createAccountFailed(w http.ResponseWriter, r *http.Request, acc
 // Both the form handler and the create handler end here, so a refused account
 // comes back on the page it was typed on rather than on a second page that would
 // have to be kept in step with this one.
-func (s *Server) renderNewAccount(w http.ResponseWriter, r *http.Request, status int, accounts []account.Account, form accountForm, formError string) {
+func (s *Server) renderNewAccount(w http.ResponseWriter, r *http.Request, cb *checkbook, status int, accounts []account.Account, form accountForm, formError string) {
 	page := newAccountPage{
-		layout:    s.pageLayout(r, "New account", accounts, 0),
+		layout:    s.pageLayout(r, cb, "New account", accounts, 0),
 		Form:      form,
 		FormError: formError,
 	}

@@ -74,13 +74,21 @@
            Back up now is a form and not a link because it does something (BK-2).
            A link would be fired by a prefetch, and the same-origin check in
            control.go would have nothing to read. */ -}}
-    {{if not .Ephemeral}}
+    {{if .Open}}
     <nav class="checkbook-actions" aria-label="This checkbook">
         <h2>This checkbook</h2>
-        <form method="post" action="/backup">
-            <input type="hidden" name="return" value="{{.ReturnTo}}">
-            <button type="submit" class="action">Back up now</button>
-        </form>
+        {{- /* Withheld for a database held in memory: there is no file to copy,
+               and an action that can only be refused is worse than one that is
+               not offered. */ -}}
+        {{if not .Ephemeral}}
+            <form method="post" action="/backup">
+                <input type="hidden" name="return" value="{{.ReturnTo}}">
+                <button type="submit" class="action">Back up now</button>
+            </form>
+        {{end}}
+        {{- /* A link, because it goes to a page that asks first (RG-3). The
+               closing itself is the POST on that page. */ -}}
+        <a class="action" href="/checkbook/close">Close checkbook</a>
     </nav>
     {{end}}
     </div>

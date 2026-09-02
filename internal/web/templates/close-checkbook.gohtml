@@ -1,0 +1,35 @@
+{{define "main"}}
+    {{- /* RG-3: closing takes the register away from every tab the household has
+           open, so it is asked about rather than done on one keystroke. It
+           destroys nothing, which is why the page says so plainly rather than
+           warning about something that cannot happen. */ -}}
+    <div class="register-head">
+        <h1>Close this checkbook?</h1>
+    </div>
+
+    <dl class="problem-facts">
+        <dt>Database</dt>
+        <dd><code>{{.Closing}}</code></dd>
+    </dl>
+
+    <p>
+        Closing does not change or delete anything. The program keeps running and lets go of the
+        file, so it becomes a single file you can copy, move, or replace with a backup. You can
+        open it again, or open another, without restarting.
+    </p>
+    <p class="muted">
+        Any other window you have open on this checkbook will say the same thing the next time you
+        use it.
+    </p>
+
+    <form method="post" action="/checkbook/close">
+        {{- /* The generation of the checkbook this page was drawn for. A tab
+               that has been on screen since before a swap is refused rather than
+               closing a database it was never looking at (CO-3). */ -}}
+        <input type="hidden" name="generation" value="{{.Generation}}">
+        <div class="entry-fields">
+            <div class="f-add"><button type="submit">Close checkbook</button></div>
+            <div class="f-add"><a class="cta" href="/">Keep it open</a></div>
+        </div>
+    </form>
+{{end}}
