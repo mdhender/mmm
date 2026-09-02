@@ -132,8 +132,9 @@ A household with a year of records in it looks like this:
 go run ./cmd/checkbook -demo
 ```
 
-This serves a sample household from memory. It reads and writes no files, and it does not touch
-the database you just made.
+This serves a sample household from memory at `http://127.0.0.1:8843/`. It reads and writes no
+files, it does not touch the database you just made, and it listens on its own port, so you can
+leave your own checkbook running while you look at it.
 
 ## 8. Keep the command where you can find it
 

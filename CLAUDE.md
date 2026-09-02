@@ -276,6 +276,12 @@ still running -- so they start it again, and again. The fixed port also makes th
 fail to bind, which says "already open, here is where" truthfully and without asking anything.
 `-port 0` still asks the system for a free one.
 
+**`DemoPort` is 8843: `-demo` listens beside the register, not on top of it.** The demo is what
+somebody opens while their own checkbook is already open, and one port cannot hold both, so the
+default moves rather than making them choose. `portWasGiven` is what keeps this honest: it asks
+whether `-port` was *set*, not what it holds, so `-port 8842 -demo` is obeyed. `portInUse` also
+skips 8843 when it suggests another port, since advice that lands on a running demo fails twice.
+
 **Running two copies at once is allowed, including on one database** -- the second just needs its
 own `-port`. Do not add a lock for it.
 SQLite coordinates multi-process access, and CO-3 is enforced by the `updated_at` token in the

@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.13.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.14.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -41,7 +41,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.13.0-beta
+checkbook 0.14.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -53,9 +53,9 @@ press Ctrl+C to stop
 | --- | --- | --- |
 | `-db PATH` | `checkbook.db` | Database file to open. A relative path is resolved against the current directory. |
 | `-host ADDR` | `127.0.0.1` | Address to listen on. Only `127.0.0.1`, `::1`, other loopback addresses, and the name `localhost` are accepted. |
-| `-port N` | `8842` | Port to listen on. `0` asks the operating system for a free port instead, which is printed at startup. |
+| `-port N` | `8842`, or `8843` with `-demo` | Port to listen on. `0` asks the operating system for a free port instead, which is printed at startup. A port given here is used whatever else is on the command line. |
 | `-open` | `true` | Open the register in the default browser at startup. Use `-open=false` to suppress. |
-| `-demo` | `false` | Serve a sample household held in memory. No file is read or written. |
+| `-demo` | `false` | Serve a sample household held in memory. No file is read or written, and it listens on `8843` so it can run beside your own register. |
 | `-version` | — | Print the version and exit. |
 
 Options are Go flags: `-db path` and `-db=path` are both accepted; boolean options must be
@@ -66,6 +66,10 @@ written `-open=false` to turn them off.
 The register is served at `http://127.0.0.1:8842/` unless `-host` or `-port` says otherwise. The
 port is fixed rather than chosen by the system, so the address is the same every time the program
 runs and can be bookmarked.
+
+`-demo` listens on `http://127.0.0.1:8843/` instead, so the sample household can be opened while
+your own register is running. That port is fixed for the same reason. Giving `-port` overrides
+either default, including `-port 8842` alongside `-demo`.
 
 Only one program can hold a port. Starting a second copy on the same port does not start a second
 register; it reports the address and exits with status 1:
@@ -79,8 +83,10 @@ If your checkbook is already open, this is where it is:
 Open that address, or close the copy that is running before starting
 another. If something else on this machine is using port 8842, start
 this copy on a different one:
-    -port 8843
+    -port 8844
 ```
+
+The suggested port skips `8843`, since that is where a demo would be.
 
 The program does not check what is listening, and does not claim to know. To run a second
 checkbook on another database at the same time, give it its own port with `-port`.
@@ -112,8 +118,9 @@ schema version is checked against the version this build expects:
 
 A database is never migrated backwards.
 
-`-demo` uses a database held in memory. It is reported as `:memory:checkbook-demo` and is
-discarded when the program stops.
+`-demo` uses a database held in memory. It is reported as `:memory:checkbook-demo`, is discarded
+when the program stops, and is served on its own port so it never has to displace the register
+holding your records.
 
 ## The register screen
 
