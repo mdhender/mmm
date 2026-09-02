@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.19.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.19.2-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -46,7 +46,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.19.0-beta
+checkbook 0.19.2-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop, or use Quit in the browser
