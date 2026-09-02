@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.9.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.10.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -33,7 +33,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.9.0-beta
+checkbook 0.10.0-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -236,10 +236,11 @@ The program exits with status 1, without opening the database or the listener, w
 any of the following. None of them can be reported in the browser, because there is no listener.
 
 These are the only failures with nowhere else to report themselves: they happen before there is a
-listener, so there is no page and no browser window to carry them. On Windows, whenever the
-program has a console — one opened by double-clicking it, and equally one belonging to a terminal
-it was run from — the window is held open with `Press Enter to close this window.` so the message
-can be read — a console allocated by double-clicking the program otherwise
+listener, so there is no page and no browser window to carry them. On Windows, when the program
+was started from the shell — its icon double-clicked, or opened from the Start menu, the taskbar,
+or a shortcut — the window is held open with `Press Enter to close this window.` so the message
+can be read. Started from a command line it is not: you keep your window, and your prompt comes
+back — a console allocated by double-clicking the program otherwise
 closes the instant it exits, taking the message with it. A failure that *is* shown in the browser,
 such as a database that will not open, does not hold the console.
 

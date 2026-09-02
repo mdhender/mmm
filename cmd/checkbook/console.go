@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 )
 
 // holdConsole keeps a console window open until the reader presses Enter.
@@ -32,12 +31,15 @@ func holdConsole(out io.Writer, in io.Reader) {
 // The caller has already established the part that matters: the program could
 // not start, and no browser window was opened to say so. Two conditions remain:
 //
-//   - Windows. A macOS Terminal window opened by double-clicking stays open on a
-//     failing exit, and a Unix shell never closes on its own.
+//   - The program was launched from the Windows shell, which allocated a console
+//     that closes the instant the process exits. Someone who typed the command
+//     keeps their window and their message, and should get their prompt back
+//     rather than a question. Away from Windows this is always false.
 //   - Standard input is a console. When it is a pipe or a file there is nobody
 //     to press anything, and waiting would hang whatever is driving the program.
-func shouldHoldConsole(goos string, stdin *os.File) bool {
-	if goos != "windows" {
+//     Belt and braces after the first condition, and cheap.
+func shouldHoldConsole(startedByExplorer bool, stdin *os.File) bool {
+	if !startedByExplorer {
 		return false
 	}
 	info, err := stdin.Stat()
@@ -50,7 +52,7 @@ func shouldHoldConsole(goos string, stdin *os.File) bool {
 // holdConsoleOnExit applies shouldHoldConsole to the real process. Call it only
 // when the program is exiting with an error that no browser window carried.
 func holdConsoleOnExit() {
-	if shouldHoldConsole(runtime.GOOS, os.Stdin) {
+	if shouldHoldConsole(startedByExplorer(), os.Stdin) {
 		holdConsole(os.Stdout, os.Stdin)
 	}
 }

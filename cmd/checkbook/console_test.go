@@ -5,13 +5,14 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 // TestShouldHoldConsole pins the remaining conditions. The caller has already
 // established that the program failed to start and that no browser window
-// carried the message; only Windows with a real console should then block.
+// carried the message; only a double-click with a real console should block.
 func TestShouldHoldConsole(t *testing.T) {
 	regular, err := os.Create(filepath.Join(t.TempDir(), "not-a-console"))
 	if err != nil {
@@ -29,26 +30,38 @@ func TestShouldHoldConsole(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		goos  string
-		stdin *os.File
-		want  bool
+		name     string
+		explorer bool
+		stdin    *os.File
+		want     bool
 	}{
-		{"windows console", "windows", console, true},
-		// A Terminal window opened by double-clicking on macOS stays open on a
-		// failing exit, and a Unix shell never closes on its own.
-		{"macos", "darwin", console, false},
-		{"linux", "linux", console, false},
+		{"double-clicked", true, console, true},
+		// Someone who typed the command keeps their window and their message,
+		// and should get their prompt back rather than a question.
+		{"run from a command line", false, console, false},
 		// A pipe or a file has nobody to press anything, and waiting would hang
 		// whatever is driving the program.
-		{"windows, redirected input", "windows", regular, false},
+		{"double-clicked, redirected input", true, regular, false},
+		{"command line, redirected input", false, regular, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldHoldConsole(tt.goos, tt.stdin); got != tt.want {
-				t.Errorf("shouldHoldConsole(%q) = %v, want %v", tt.goos, got, tt.want)
+			if got := shouldHoldConsole(tt.explorer, tt.stdin); got != tt.want {
+				t.Errorf("shouldHoldConsole(%v) = %v, want %v", tt.explorer, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestStartedByExplorerOffWindows: the console hold is a Windows problem, and
+// everywhere else the answer is a constant. This is what keeps a Unix shell or a
+// macOS Terminal from ever waiting on input.
+func TestStartedByExplorerOffWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Windows implementation asks the operating system")
+	}
+	if startedByExplorer() {
+		t.Errorf("startedByExplorer() = true on %s, want false", runtime.GOOS)
 	}
 }
 

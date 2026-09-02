@@ -249,14 +249,18 @@ because a console allocated by double-clicking closes the instant the process ex
 keeps a failed Terminal window and a Unix shell never closes; and stdin being a character device,
 so a script driving the program is never left waiting on input.
 
-**Known limitation, decision deferred until after the MVP.** A character device does not
-distinguish a console Windows allocated for a double-click from one belonging to PowerShell, so
-the hold currently fires for command-line users too, who should just see the message and get their
-prompt back. Telling the two apart means asking whether the parent process is `explorer.exe`
-(`CreateToolhelp32Snapshot` plus `Process32First`/`Next`, all in stdlib `syscall`), which is what
-mousetrap does and what we would have to write ourselves — see the licence rule above.
+The trigger is `startedByExplorer` (`cmd/checkbook/explorer_windows.go`), which asks whether the
+parent process is `explorer.exe` by walking a `CreateToolhelp32Snapshot` — all stdlib `syscall`,
+no dependency, per the licence rule above. **One snapshot, one pass**: the parent id and the
+shell ids come from the same instant, and only the `explorer.exe` ids are kept rather than a table
+of every process. It is conservative — every failure answers false, costing a message rather than
+a program stopped for input nobody is there to give. Two documented limits: a parent that has
+already exited leaves an id Windows may have reused, and launching by any other route (a
+third-party file manager, a double-clicked `.bat`, "Run as administrator") reads as a command
+line. Neither is worth more machinery. `explorer_other.go` returns a constant off Windows, which
+is what keeps a Unix shell or a macOS Terminal from ever waiting on input.
 
-Before spending anything on that, note how little the hold protects. It is reached from exactly
+Note also how little the hold protects. It is reached from exactly
 four places, and a double-clicking user cannot reach the first two, because both require passing a
 flag they never pass: a non-loopback `-host`, and a `-port` already occupied (the default of 0
 asks the system for a free one). The other two are our own template bugs. Everything a household
