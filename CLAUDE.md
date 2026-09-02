@@ -231,6 +231,37 @@ this build has never seen. The first symptom of that is a wrong answer, not an e
 deliberately not load-bearing, pinned by `TestOpenRejectsForeignDatabase` so a wording change
 fails a test instead of degrading a user's page.
 
+### One copy per database
+
+Two copies of the program on one database is the case CO-3 is about, raised to
+the process level: two registers over one file, neither seeing the other's writes. It is not
+caught by the port, and must not be — with the default `-port` of 0 each copy is handed a free
+port and neither notices the other, and two copies on *different* databases are perfectly fine.
+
+So the claim is on the database. `cmd/checkbook/lock.go` writes `<database>.lock` beside the
+file, holding the URL, pid, start time, and resolved database path, and removes it on shutdown.
+A second copy that finds the file **probes the recorded address over HTTP** rather than asking
+whether the pid is alive: process liveness means different things per platform and answers the
+wrong question anyway, since what matters is whether a register is actually being served. The
+probe compares `web.DatabaseHeader` (`X-Checkbook-Database`, set on every response) against its
+own resolved path, so a port reused after a crash cannot masquerade as the running instance.
+
+**A stale lock is never the household's problem to solve.** An address that does not answer is
+taken over silently — no message, no file to hunt down and delete. Keep it that way.
+
+The lock is advisory, and deliberately so: no `flock` syscalls, no dependency, identical on both
+platforms (PL-5, TS-4). Deleting the file while the program runs defeats it. `-demo` takes no
+lock — its database is in memory and private to the process.
+
+### Holding the console open
+
+`holdConsoleOnExit` blocks on Enter before a failing exit, but only when all three of
+`runtime.GOOS == "windows"`, `-open` is on, and stdin is a character device. The reason is PL-4's
+premise again: a console allocated by double-clicking closes the instant the process exits, so
+the message goes with it. macOS keeps a failed Terminal window open on its own, and `-open=false`
+means a script is driving — blocking there would hang it. Flags are package-level in `main` so
+this decision can be made after `run` returns.
+
 ### When the database will not open
 
 `cmd/checkbook` does not exit when `openStore` fails. It builds `web.NewProblem` from

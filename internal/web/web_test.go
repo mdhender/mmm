@@ -33,7 +33,7 @@ func open(t *testing.T) *storage.Store {
 // exercise failures on purpose and the noise is not the subject.
 func server(t *testing.T, store *storage.Store) http.Handler {
 	t.Helper()
-	s, err := web.New(store, "0.0.0-test", slog.New(slog.DiscardHandler))
+	s, err := web.New(store, "0.0.0-test", "/tmp/checkbook.db", slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("web.New: %v", err)
 	}
@@ -223,6 +223,23 @@ func TestWriteMethodsAreRejected(t *testing.T) {
 	server(t, store).ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/accounts/1", nil))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST status = %d, want 405", w.Code)
+	}
+}
+
+// TestDatabaseHeaderOnEveryResponse: a second copy of the program started on the
+// same database finds this header at the address in the lock file, and uses it to
+// tell a live instance holding that file from an unrelated one that was given the
+// same port after a crash.
+func TestDatabaseHeaderOnEveryResponse(t *testing.T) {
+	store := open(t)
+	seed(t, store)
+	h := server(t, store)
+
+	for _, path := range []string{"/", "/accounts/1", "/accounts/99", "/nothing"} {
+		w := get(t, h, path)
+		if got := w.Header().Get(web.DatabaseHeader); got != "/tmp/checkbook.db" {
+			t.Errorf("%s: %s = %q, want the database path", path, web.DatabaseHeader, got)
+		}
 	}
 }
 

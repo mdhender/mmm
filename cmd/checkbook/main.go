@@ -43,26 +43,30 @@ const (
 	demoDatabase = ":memory:" + demoName
 )
 
+// Flags are package-level so that main can consult them after run returns --
+// whether to hold the console open depends on -open. See console.go.
+var (
+	dbPath      = flag.String("db", "checkbook.db", "path to the checkbook database")
+	host        = flag.String("host", "127.0.0.1", "loopback address to listen on")
+	port        = flag.Int("port", 0, "port to listen on; 0 asks the system for a free one")
+	openBrowser = flag.Bool("open", true, "open the register in the default browser")
+	demo        = flag.Bool("demo", false, "serve a sample household from memory, touching no files")
+	showVersion = flag.Bool("version", false, "print the version and exit")
+)
+
 func main() {
+	flag.Parse()
+
 	if err := run(); err != nil {
 		if !errors.Is(err, errReported) {
 			fmt.Fprintf(os.Stderr, "checkbook: %v\n", err)
 		}
+		holdConsoleOnExit(*openBrowser)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	var (
-		dbPath      = flag.String("db", "checkbook.db", "path to the checkbook database")
-		host        = flag.String("host", "127.0.0.1", "loopback address to listen on")
-		port        = flag.Int("port", 0, "port to listen on; 0 asks the system for a free one")
-		openBrowser = flag.Bool("open", true, "open the register in the default browser")
-		demo        = flag.Bool("demo", false, "serve a sample household from memory, touching no files")
-		showVersion = flag.Bool("version", false, "print the version and exit")
-	)
-	flag.Parse()
-
 	version := mmm.Version()
 	if *showVersion {
 		fmt.Println(version.String())
@@ -97,6 +101,30 @@ func run() error {
 	// does have a terminal.
 	var handler http.Handler
 	store, storeErr := openStore(ctx, *dbPath, *demo)
+	if storeErr == nil && !*demo {
+		// Claim the database now that it is known to open and the address is
+		// known. A second copy of the program on the same file is the case this
+		// guards: two registers over one database, each unaware of the other's
+		// writes, is precisely the silent loss CO-3 exists to prevent.
+		//
+		// -demo is exempt. Its database is held in memory and private to the
+		// process, so two of them share nothing.
+		resolved, err := databasePath(*dbPath)
+		if err != nil {
+			store.Close()
+			return err
+		}
+		held, other, err := acquireLock(resolved, "http://"+listener.Addr().String()+"/", os.Getpid())
+		if err != nil {
+			store.Close()
+			return err
+		}
+		if other != nil {
+			store.Close()
+			return alreadyRunning(os.Stderr, *other, resolved, *openBrowser, log)
+		}
+		defer held.Release()
+	}
 	if storeErr != nil {
 		fmt.Fprintf(os.Stderr, "checkbook: %v\n", storeErr)
 		handler, err = web.NewProblem(
@@ -111,7 +139,14 @@ func run() error {
 		// shutdown below does that before returning.
 		defer store.Close()
 
-		if handler, err = web.New(store, version.Short(), log); err != nil {
+		served, err := databasePath(*dbPath)
+		if err != nil {
+			return err
+		}
+		if *demo {
+			served = demoDatabase
+		}
+		if handler, err = web.New(store, version.Short(), served, log); err != nil {
 			return err
 		}
 	}

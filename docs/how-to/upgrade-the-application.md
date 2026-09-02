@@ -21,9 +21,12 @@ why you take one first.
 Press **Ctrl+C** in the terminal running it. Close any browser tabs showing the register, so you
 are not tempted to trust a stale page later.
 
-Confirm it is really stopped: in the database folder, `checkbook.db-wal` and `checkbook.db-shm`
-should be gone, leaving `checkbook.db` on its own. A copy taken while those files exist can be
-missing your most recent changes.
+Confirm it is really stopped: in the database folder, `checkbook.db-wal`, `checkbook.db-shm`, and
+`checkbook.db.lock` should all be gone, leaving `checkbook.db` on its own. A copy taken while
+those files exist can be missing your most recent changes.
+
+If starting the program later tells you the checkbook is already open, a copy is still running —
+stop that one before going on.
 
 ## 2. Write down where you are
 

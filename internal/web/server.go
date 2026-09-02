@@ -39,16 +39,21 @@ type Server struct {
 	version string
 	log     *slog.Logger
 
+	// database is the resolved path this server is serving, announced in
+	// DatabaseHeader.
+	database string
+
 	mux   *http.ServeMux
 	pages map[string]*template.Template
 }
 
 // New builds a server over store. version is shown in the footer so a bug report
-// can say which build produced a page.
+// can say which build produced a page, and database is the resolved path
+// announced in DatabaseHeader.
 //
 // Templates are parsed once, here, so a broken template fails at startup rather
 // than in the middle of rendering somebody's register.
-func New(store *storage.Store, version string, log *slog.Logger) (*Server, error) {
+func New(store *storage.Store, version, database string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -59,11 +64,12 @@ func New(store *storage.Store, version string, log *slog.Logger) (*Server, error
 	}
 
 	s := &Server{
-		store:   store,
-		version: version,
-		log:     log,
-		mux:     http.NewServeMux(),
-		pages:   pages,
+		store:    store,
+		version:  version,
+		log:      log,
+		database: database,
+		mux:      http.NewServeMux(),
+		pages:    pages,
 	}
 	s.routes()
 	return s, nil
@@ -90,8 +96,18 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 }
 
+// DatabaseHeader is set on every response to the absolute path of the database
+// being served.
+//
+// It is how a second copy of the program, started on the same database, can tell
+// whether the address in that database's lock file is still being served by a
+// checkbook -- and by a checkbook holding this same file, rather than an
+// unrelated instance that was later given the same port.
+const DatabaseHeader = "X-Checkbook-Database"
+
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set(DatabaseHeader, s.database)
 	s.mux.ServeHTTP(w, r)
 }
 
