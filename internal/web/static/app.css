@@ -106,6 +106,13 @@ td.memo, td.payee, td.category { overflow-wrap: anywhere; }
 }
 .statusbar code { color: var(--ink); }
 
+/* The version and the link to the issue tracker are one group, so the flex
+   split above keeps them together at the right-hand corner. */
+.statusbar .version { display: inline-flex; align-items: center; gap: .5rem; }
+.statusbar .repo { display: inline-flex; color: var(--muted); }
+.statusbar .repo:hover, .statusbar .repo:focus-visible { color: var(--ink); }
+.statusbar .repo svg { display: block; width: 1rem; height: 1rem; fill: currentColor; }
+
 .visually-hidden {
     position: absolute;
     width: 1px; height: 1px;

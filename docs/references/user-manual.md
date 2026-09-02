@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.10.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.10.1-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -33,7 +33,7 @@ go run ./cmd/checkbook
 It prints its version, the database in use, and the address to open, then serves until stopped:
 
 ```
-checkbook 0.10.0-beta
+checkbook 0.10.1-beta
 database:  /Users/example/Documents/checkbook/checkbook.db
 register:  http://127.0.0.1:8842/
 press Ctrl+C to stop
@@ -188,7 +188,10 @@ An account with no transactions shows its opening balance as both the ending and
 
 ### Status bar
 
-The path of the database file in use, and the program's version.
+The path of the database file in use, and the program's version. Beside the version is a
+GitHub mark linking to the project's issue tracker; following it opens a browser tab to
+GitHub. Nothing on the page is fetched from the network, and the program itself never
+contacts GitHub.
 
 ## Addresses
 

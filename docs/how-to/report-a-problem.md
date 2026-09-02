@@ -68,13 +68,14 @@ paint over the payees and amounts around it.
 
 ## 5. File it
 
-Open an issue at **<https://github.com/mdhender/mmm/issues>**.
+Open an issue at **<https://github.com/mdhender/mmm/issues>**. The GitHub mark in the
+right-hand corner of the status bar goes to the same place, if the program is still open.
 
 One problem per report. Put what went wrong in the title — "register shows the wrong running
 balance after a split", not "bug" — and paste this at the top of the body:
 
 ```text
-Version:     0.10.0-beta
+Version:     0.10.1-beta
 OS:          macOS 15.6
 Browser:     Safari 18.2      (only if the problem is on the page)
 Go:          go1.26.4
