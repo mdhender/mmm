@@ -46,6 +46,13 @@ Go toolchain is 1.26.4 (`go.mod`). Dependencies: `github.com/maloquacious/semver
 string), `github.com/joho/godotenv` (wrapped by `internal/dotenv`), and
 `zombiezen.com/go/sqlite` (storage).
 
+**No Apache-2.0 dependencies.** The project is MIT, and every module in the tree today is MIT,
+BSD-3, or ISC — there is no Apache-2.0 anywhere, directly or transitively, and it stays that way.
+Check the license before adding a module, not after. This rules out some otherwise obvious
+choices, `github.com/inconshreveable/mousetrap` among them; where the wanted code is a handful of
+stdlib `syscall` calls, write it here instead of taking the dependency (TS-4 would usually say
+that anyway).
+
 ## Architecture (intended)
 
 ```
@@ -241,6 +248,21 @@ and no window, has nowhere else to go. Then two conditions remain: `runtime.GOOS
 because a console allocated by double-clicking closes the instant the process exits while macOS
 keeps a failed Terminal window and a Unix shell never closes; and stdin being a character device,
 so a script driving the program is never left waiting on input.
+
+**Known limitation, decision deferred until after the MVP.** A character device does not
+distinguish a console Windows allocated for a double-click from one belonging to PowerShell, so
+the hold currently fires for command-line users too, who should just see the message and get their
+prompt back. Telling the two apart means asking whether the parent process is `explorer.exe`
+(`CreateToolhelp32Snapshot` plus `Process32First`/`Next`, all in stdlib `syscall`), which is what
+mousetrap does and what we would have to write ourselves — see the licence rule above.
+
+Before spending anything on that, note how little the hold protects. It is reached from exactly
+four places, and a double-clicking user cannot reach the first two, because both require passing a
+flag they never pass: a non-loopback `-host`, and a `-port` already occupied (the default of 0
+asks the system for a free one). The other two are our own template bugs. Everything a household
+actually hits — a bad path, a foreign file, a schema from a newer release — is served as a page in
+the browser, and a browser that fails to open leaves the program *running*, so the console stays
+up with the address in it regardless.
 
 **Running two copies at once is allowed, including on one database.** Do not add a lock for it.
 SQLite coordinates multi-process access, and CO-3 is enforced by the `updated_at` token in the

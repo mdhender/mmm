@@ -212,9 +212,10 @@ The program exits with status 1, without opening the database or the listener, w
 any of the following. None of them can be reported in the browser, because there is no listener.
 
 These are the only failures with nowhere else to report themselves: they happen before there is a
-listener, so there is no page and no browser window to carry them. On Windows, when the program
-was started with a console, the window is therefore held open with `Press Enter to close this
-window.` so the message can be read — a console allocated by double-clicking the program otherwise
+listener, so there is no page and no browser window to carry them. On Windows, whenever the
+program has a console — one opened by double-clicking it, and equally one belonging to a terminal
+it was run from — the window is held open with `Press Enter to close this window.` so the message
+can be read — a console allocated by double-clicking the program otherwise
 closes the instant it exits, taking the message with it. A failure that *is* shown in the browser,
 such as a database that will not open, does not hold the console.
 
