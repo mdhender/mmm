@@ -361,3 +361,45 @@ table.backups .muted { font-size: .8rem; }
 /* The older restore-to-a-copy, kept below the list. It is a second offer rather
    than a competing one, so its heading sits at the weight of a subsection. */
 .restore-copy-heading { margin-top: 2rem; }
+
+/* The Edit link at the end of a register row. It is quiet on purpose: the
+   register is a table of numbers to read, and a column of links competing with
+   them would make it harder to read for the sake of an action taken rarely. */
+th.actions, td.actions { text-align: right; white-space: nowrap; width: 3.5rem; }
+td.actions a { color: var(--muted); text-decoration: none; }
+tr:hover td.actions a, td.actions a:focus-visible { color: var(--accent); text-decoration: underline; }
+
+/* One transaction laid out as a list of facts, for the page that asks before
+   removing it. Two columns rather than problem-facts' single row, because there
+   are eight pairs here and one line of them would be unreadable. */
+.txn-facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: .25rem .8rem;
+    margin: 0;
+    padding: .6rem .8rem;
+    background: var(--panel);
+    border-left: 3px solid var(--accent);
+}
+.txn-facts dt { color: var(--muted); }
+.txn-facts dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Links under a form: back to the register, and the one action that destroys
+   something. The destructive one is red and last, so it is not the thing a
+   hurried hand lands on first. */
+.page-actions { display: flex; gap: 1.5rem; margin: 1.2rem 0 0; }
+a.danger { color: var(--negative); }
+button.danger { border-color: var(--negative); background: var(--negative); }
+button.danger:hover { background: var(--ink); border-color: var(--ink); }
+
+/* A box that is shown rather than offered: the category and the amount of a
+   transaction split among several categories, which this release cannot edit.
+   The note under the form says so in words, but a box that looks exactly like
+   its neighbours and refuses to take a keystroke says it the wrong way. */
+.entry-fields input:disabled,
+.entry-fields input:read-only {
+    background: var(--panel);
+    color: var(--muted);
+    border-style: dashed;
+    cursor: not-allowed;
+}

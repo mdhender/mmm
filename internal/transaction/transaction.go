@@ -438,6 +438,66 @@ RETURNING id, account_id, date, payee, memo, amount, status, check_number,
 	return txn, nil
 }
 
+// Detail is one transaction with what the register knows about its categories.
+//
+// It is not an Entry, and the difference is the balance: a running balance is a
+// property of a row's position in a register, not of a transaction, and an Entry
+// carrying a meaningless one would be a number waiting to be printed by mistake.
+type Detail struct {
+	Transaction
+
+	// Category is the name to show, empty when there are no splits or the first
+	// has no category. SplitCount is how many splits there are; more than one
+	// means Category is only the first of several.
+	Category   string
+	SplitCount int
+}
+
+// IsSplit reports whether the transaction is divided among more than one
+// category.
+func (d Detail) IsSplit() bool { return d.SplitCount > 1 }
+
+// Get reads one of acct's transactions, with its category and split count.
+//
+// It is what an edit form is built from, so it is scoped to the account for the
+// reason get is: the id comes from a URL, and a URL can be edited. An id
+// belonging to another account reads as ErrNotFound rather than as somebody
+// else's transaction.
+func Get(ctx context.Context, store *storage.Store, acct account.Account, id int64) (Detail, error) {
+	conn, err := store.Conn(ctx)
+	if err != nil {
+		return Detail{}, fmt.Errorf("get transaction: %w", err)
+	}
+	defer store.Put(conn)
+
+	stmt, err := conn.Prepare(selectEntry + `
+ WHERE t.id = $id AND t.account_id = $account_id;`)
+	if err != nil {
+		return Detail{}, fmt.Errorf("get transaction: %w", err)
+	}
+	stmt.SetInt64("$id", id)
+	stmt.SetInt64("$account_id", acct.ID)
+	defer stmt.Reset()
+
+	hasRow, err := stmt.Step()
+	if err != nil {
+		return Detail{}, fmt.Errorf("get transaction: %w", err)
+	}
+	if !hasRow {
+		return Detail{}, fmt.Errorf("transaction %d: %w", id, ErrNotFound)
+	}
+
+	txn, err := scanTransaction(stmt, acct.Currency)
+	if err != nil {
+		return Detail{}, err
+	}
+	return Detail{
+		Transaction: txn,
+		Category:    stmt.GetText("category"),
+		SplitCount:  int(stmt.GetInt64("split_count")),
+	}, nil
+}
+
 // get reads one of acct's transactions on an open connection.
 //
 // It is scoped to the account so an id belonging to another account reads as

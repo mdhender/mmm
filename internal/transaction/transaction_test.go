@@ -1061,3 +1061,72 @@ func TestDeleteMissing(t *testing.T) {
 		t.Fatalf("second Delete err = %v, want transaction.ErrNotFound", err)
 	}
 }
+
+// TestGetReadsOneTransaction: the edit form is built from this, so it has to
+// carry the category and the split count the register shows.
+func TestGetReadsOneTransaction(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	groceries, err := category.Ensure(ctx, store, "Groceries")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	household, err := category.Ensure(ctx, store, "Household")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	plain, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Memo: "weekly", Amount: usd(t, "-84.17"),
+		CheckNumber: "101",
+		Splits:      []transaction.Split{{CategoryID: groceries.ID, Amount: usd(t, "-84.17")}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	split, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-15", Payee: "Costco", Amount: usd(t, "-150.00"),
+		Splits: []transaction.Split{
+			{CategoryID: groceries.ID, Amount: usd(t, "-90.00")},
+			{CategoryID: household.ID, Amount: usd(t, "-60.00")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	bare, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-16", Payee: "Panama Joe", Amount: usd(t, "-18.42"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := transaction.Get(ctx, store, acct, plain.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Payee != "Riba Smith" || got.Memo != "weekly" || got.CheckNumber != "101" ||
+		got.Amount.Decimal() != "-84.17" || got.Category != "Groceries" || got.SplitCount != 1 || got.IsSplit() {
+		t.Errorf("Get returned %+v", got)
+	}
+	if !got.UpdatedAt.Equal(plain.UpdatedAt) {
+		t.Errorf("token = %s, want %s: the form would send back a stale one", got.UpdatedAt, plain.UpdatedAt)
+	}
+
+	if got, err := transaction.Get(ctx, store, acct, split.ID); err != nil {
+		t.Fatalf("Get split: %v", err)
+	} else if got.SplitCount != 2 || !got.IsSplit() {
+		t.Errorf("split has %d splits, IsSplit = %v", got.SplitCount, got.IsSplit())
+	}
+
+	if got, err := transaction.Get(ctx, store, acct, bare.ID); err != nil {
+		t.Fatalf("Get uncategorized: %v", err)
+	} else if got.Category != "" || got.SplitCount != 0 {
+		t.Errorf("uncategorized transaction has category %q and %d splits", got.Category, got.SplitCount)
+	}
+
+	if _, err := transaction.Get(ctx, store, acct, plain.ID+9999); !errors.Is(err, transaction.ErrNotFound) {
+		t.Fatalf("Get missing err = %v, want transaction.ErrNotFound", err)
+	}
+}

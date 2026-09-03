@@ -46,6 +46,7 @@ func TestReadOnlyWithholdsEveryWriteAction(t *testing.T) {
 	for _, unwanted := range []string{
 		"Add a transaction", // the entry form
 		"Mark cleared",      // the status column's control
+		"/edit",             // the link that opens a transaction to change it
 		"+ Add account",
 		"Back up now",
 	} {
@@ -79,6 +80,10 @@ func TestReadOnlyRefusesAWriteThatArrivesAnyway(t *testing.T) {
 		{"creating an account", http.MethodPost, "/accounts", url.Values{"name": {"Savings"}, "type": {"savings"}, "currency": {"USD"}}},
 		{"entering a transaction", http.MethodPost, "/accounts/1/transactions", entryValues()},
 		{"marking a row cleared", http.MethodPost, "/accounts/1/transactions/1/status", url.Values{"status": {"cleared"}}},
+		{"the edit form", http.MethodGet, "/accounts/1/transactions/3/edit", nil},
+		{"changing a transaction", http.MethodPost, "/accounts/1/transactions/3", entryValues()},
+		{"the removal page", http.MethodGet, "/accounts/1/transactions/3/delete", nil},
+		{"removing a transaction", http.MethodPost, "/accounts/1/transactions/3/delete", url.Values{}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			send := func() *httptest.ResponseRecorder { return postFromPage(t, h, tt.path, tt.form) }

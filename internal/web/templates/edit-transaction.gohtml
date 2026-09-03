@@ -1,0 +1,92 @@
+{{define "main"}}
+    <div class="register-head">
+        <h1>Edit a transaction</h1>
+        <p class="muted">
+            In {{.Account.Name}} &middot; {{.Currency}} &middot; {{.StatusLabel}}
+        </p>
+    </div>
+
+    {{- /* A plain form POST and a redirect, with no HTMX and no script. Changing
+           a date or an amount moves the running balance of every row below it,
+           so there is no part of the page to swap and a full re-render is the
+           honest answer. The POST redirects, which is what stops a reload
+           applying the same change twice. */ -}}
+    <form class="entry" method="post" action="/accounts/{{.Account.ID}}/transactions/{{.ID}}">
+        {{- /* The version this form was filled in against. A form left open
+               while another window changed the same transaction is refused
+               rather than applied over it (CO-3). */ -}}
+        <input type="hidden" name="updated_at" value="{{.Token}}">
+
+        {{if .FormError}}
+            {{- /* Says what happened and what to do next, like every other
+                   failure the program reports (RG-4). */ -}}
+            <p class="entry-error" role="alert">{{.FormError}}</p>
+        {{end}}
+
+        <div class="entry-fields">
+            <label class="f-date">Date
+                <input type="text" name="date" value="{{.Form.Date}}"
+                       inputmode="numeric" placeholder="YYYY-MM-DD" required autofocus>
+            </label>
+            <label class="f-num">Num
+                <input type="text" name="check_number" value="{{.Form.CheckNumber}}" inputmode="numeric">
+            </label>
+            <label class="f-payee">Payee
+                <input type="text" name="payee" value="{{.Form.Payee}}" required>
+            </label>
+            {{if .IsSplit}}
+                {{- /* This release has no split editor. The category and the
+                       amount are shown and not offered, because one box cannot
+                       hold what was divided among several categories and
+                       flattening it would be a quiet loss of what the household
+                       recorded. */ -}}
+                <label class="f-category">Category
+                    <input type="text" value="&mdash; Split &mdash;" disabled>
+                </label>
+            {{else}}
+                <label class="f-category">Category
+                    <input type="text" name="category" value="{{.Form.Category}}"
+                           list="category-names" autocomplete="off" placeholder="Uncategorized">
+                </label>
+            {{end}}
+            <label class="f-memo">Memo
+                <input type="text" name="memo" value="{{.Form.Memo}}">
+            </label>
+            {{- /* Two boxes, as on the entry form. The box says which way the
+                   money went, so no sign is typed and none can be forgotten. */ -}}
+            <label class="f-payment">Payment
+                <input type="text" name="payment" value="{{.Form.Payment}}"
+                       inputmode="decimal" class="money"{{if .IsSplit}} readonly{{end}}>
+            </label>
+            <label class="f-deposit">Deposit
+                <input type="text" name="deposit" value="{{.Form.Deposit}}"
+                       inputmode="decimal" class="money"{{if .IsSplit}} readonly{{end}}>
+            </label>
+            <div class="f-add">
+                <button type="submit">Save</button>
+            </div>
+
+            <datalist id="category-names">
+                {{range .Categories}}<option value="{{.}}"></option>{{end}}
+            </datalist>
+        </div>
+
+        <p class="muted entry-note">
+            {{if .IsSplit}}
+                This transaction is divided among {{.SplitCount}} categories. This release cannot
+                edit those parts, so the category and the amount are shown here rather than
+                offered; everything else can be changed. To change the amount, remove this
+                transaction and enter it again.
+            {{else}}
+                Amounts are in {{.Currency}}, without a sign. Whether the bank has shown this
+                transaction is marked in the register's status column, not here: that is a fact
+                about the bank rather than a correction to what was entered.
+            {{end}}
+        </p>
+    </form>
+
+    <div class="page-actions">
+        <a href="/accounts/{{.Account.ID}}#txn-{{.ID}}">Back to the register</a>
+        <a class="danger" href="/accounts/{{.Account.ID}}/transactions/{{.ID}}/delete">Remove this transaction</a>
+    </div>
+{{end}}

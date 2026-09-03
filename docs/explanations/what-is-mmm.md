@@ -124,15 +124,17 @@ program that can still be trusted after being left alone for a year.
 Worth being blunt, because everything above describes the intent and the software is not there
 yet.
 
-Today `mmm` **displays** a register: accounts, transactions with running balances, cleared and
-uncleared totals, from a database file. It cannot yet create an account, enter or edit a
-transaction, import, export, reconcile, search, or make a backup for you. The version number
-starts with a zero and ends in `beta` for good reason.
+Today `mmm` **keeps** a register: it creates accounts, enters transactions, changes and removes
+them, marks them cleared, and backs itself up — writing a copy it has read back before naming, and
+putting one back in a single press. It cannot yet split a transaction among several categories,
+record a transfer, import, export, search, or reconcile. The version number starts with a zero and
+ends in `beta` for good reason.
 
-What does exist is the part everything else has to stand on: exact money, a schema that refuses to
-store an amount as anything but an integer, identifiers that are never reused, and a register whose
-arithmetic lives in one place so that a terminal interface will show the same numbers as the
-browser. The interesting work — entering, importing, reconciling — is ahead.
+What exists underneath is the part everything else has to stand on: exact money, a schema that
+refuses to store an amount as anything but an integer, identifiers that are never reused, a write
+that refuses to overwrite a change it did not see, and a register whose arithmetic lives in one
+place so that a terminal interface will show the same numbers as the browser. The interesting work
+— importing, reconciling — is ahead.
 
 ## The measure
 

@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `mmm` is a local-first household **checkbook** written in Go. The repository is early. The
 storage layer, the domain packages behind the register, and a web UI exist (`cmd/checkbook` serves
-it). The register creates accounts, displays them, takes new transactions, and marks them cleared,
-and the checkbook itself can be backed up, closed, reopened, opened read-only, replaced by a
-backup in one press, and quit from the browser; editing an account or a transaction, splitting,
-transfers, importing, and reconciling do not exist yet. Much of the code written here is still creating the application rather than
+it). The register creates accounts, displays them, takes new transactions, changes and removes
+them, and marks them cleared, and the checkbook itself can be backed up, closed, reopened, opened
+read-only, replaced by a backup in one press, and quit from the browser; editing an account,
+splitting a transaction, transfers, importing, and reconciling do not exist yet. Much of the code written here is still creating the application rather than
 modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
@@ -98,7 +98,19 @@ reuse them rather than becoming a second application.
   split count, and the running balance, plus the ending and cleared balances. **The running
   balance is computed there, not in a template**, so every interface shows the same number.
   `transaction.Create` writes a transaction and its splits in one database transaction and
-  rejects splits that do not total the amount.
+  rejects splits that do not total the amount. **`Update` and `Delete` are RG-2's other half**,
+  built on `SetStatus`'s pattern: read the row and its token inside one immediate transaction,
+  refuse a moved token with `ErrConflict` and a reconciled row with `ErrReconciled` on every
+  field (RC-3). Because the category is not a column on `transactions` (see
+  `docs/adrs/0001-categories-live-on-splits.md`), an edit is an `UPDATE` of the parent **plus a
+  replacement of the splits**, in the same transaction. `Edit.Splits` is a `*[]Split` and nil is
+  not the empty slice: nil leaves the stored splits alone, which is what lets the register's edit
+  form change the payee of a transaction split three ways without flattening it, while the empty
+  slice removes them and leaves it uncategorized. The invariant is checked against whichever set
+  will be stored, so changing a split transaction's amount is `ErrSplitTotal` rather than a
+  quietly broken record. An edit that changes nothing writes nothing, so a saved-but-unchanged
+  form does not make every other tab stale. `Delete` is a real delete -- no tombstone, no
+  reversing entry; the splits go by `ON DELETE CASCADE` and BK-1's backups are the way back.
 - `internal/backup` — writes a verified, timestamped copy of a database (BK-2, BK-5), restores one
   (BK-4), lists the copies it can find (`Find`), and puts a restored one at the checkbook's name
   (`Replace`, BK-7). `backup.Create(ctx, src, dir)` takes a **path**, not a `*storage.Store`, which
@@ -503,16 +515,27 @@ HTML. No SQL and no balance arithmetic belong here.
   `internal/web/htmx.md`). It arrived with marking a row cleared, the first interaction that
   genuinely replaces part of a page: the answer is the one `<tr>` plus the totals as an
   out-of-band swap, because clearing moves the cleared balance and the uncleared count but not the
-  ending balance. It is **never a CDN reference** (PL-3, TS-4). Entering a transaction and
-  creating an account are still plain POSTs and redirects — a new row changes the running balance
-  of every row below it, and a new account changes the list beside every page, so in neither case
-  is there a fragment to swap.
+  ending balance. It is **never a CDN reference** (PL-3, TS-4). Entering a transaction,
+  creating an account, and changing or removing a transaction are still plain POSTs and redirects
+  — a new row changes the running balance of every row below it, an edit moves every balance below
+  it, a removal moves the totals besides, and a new account changes the list beside every page, so
+  in none of those cases is there a fragment to swap.
 - **Every htmx control is a real form that works without it.** The handler answers a fragment when
   `HX-Request` is set and a redirect otherwise, so the register keeps working if the script never
   loads. Keep it that way rather than putting `hx-` attributes on a bare element.
 - **`register.gohtml` defines `row`, `totals`, and `notice`**, rendered both inside the page and
   on their own. A change to a register row belongs in the `row` template, or a swapped-in row and
-  a reloaded page will disagree.
+  a reloaded page will disagree. The row's last cell is the **Edit** link: it is *omitted* on a
+  read-only register, where the header is omitted too, and *empty* on a reconciled row, where the
+  header is not — the neighbours still have a column to fill.
+- **Changing and removing a transaction are four routes**, all under `withWritableCheckbook`:
+  `GET .../{txn}/edit` and `POST .../{txn}` for the change, `GET` and `POST .../{txn}/delete` for
+  the removal, which asks first (RG-3). `transactionFor` is the shared front door — it resolves
+  the account and the transaction and refuses a reconciled one, so the four cannot drift apart.
+  The edit form reuses `parseEntryForm`, which takes the button's name so one set of rules can say
+  "press Save" here and "press Add" on the register. A conflict is **not** an error page: the form
+  comes back with the reader's own typing, what the transaction now reads, and a fresh token —
+  told, not discarded, which is what CO-3 asks for.
 - **An in-memory database is marked in the frame.** `layout.Ephemeral` comes from
   `store.IsMemory()`, not from the `-demo` flag, so the mark follows the database that keeps
   nothing rather than the way the program was started. Both bars turn amber and an hourglass is

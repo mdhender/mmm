@@ -72,6 +72,14 @@ func (s *Server) noticeFor(r *http.Request) string {
 			", as an ordinary checkbook. It was opened and read back before it was given that name, and the backup itself was not altered. Open it below to check the balances, then back it up so the trail continues from here."
 	}
 
+	if q.Get(removedParam) != "" {
+		// Fixed words, and nothing from the address in them. The transaction it
+		// named is gone, so there is nothing left to look it up by, and a notice
+		// that quoted the query string would let an address put text on the page.
+		return "That transaction was removed, together with the way it was divided among categories. " +
+			"The balances below no longer include it. The categories themselves are untouched, and your backups still hold the transaction."
+	}
+
 	return ""
 }
 

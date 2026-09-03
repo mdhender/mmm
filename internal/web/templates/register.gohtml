@@ -24,6 +24,9 @@
                 <th scope="col" class="money">Amount</th>
                 <th scope="col" class="status" title="blank: only in the checkbook. c: the bank has shown it. R: recorded by a reconciliation.">&#10003;</th>
                 <th scope="col" class="money">Balance</th>
+                {{- /* Withheld entirely on a read-only register, so the column
+                       is not an empty header over rows that offer nothing. */ -}}
+                {{if not .ReadOnly}}<th scope="col" class="actions"><span class="visually-hidden">Edit</span></th>{{end}}
             </tr>
             </thead>
             <tbody>
@@ -147,6 +150,20 @@
             {{end}}
         </td>
         <td class="money{{if .BalanceNegative}} negative{{end}}">{{.Balance}}</td>
+        {{- /* A link, not a form: opening a transaction to change it is a page
+               to go to, and the change itself is posted from there.
+
+               The cell is omitted on a read-only register, where the header is
+               omitted too, and left empty on a reconciled row, where the header
+               is not: a finished reconciliation is a fact the register does not
+               rewrite (RC-3), but its neighbours still have a column to fill. */ -}}
+        {{if not .ReadOnly}}
+            <td class="actions">
+                {{- if not .Reconciled -}}
+                    <a href="/accounts/{{.AccountID}}/transactions/{{.ID}}/edit">Edit<span class="visually-hidden"> {{.Payee}} on {{.Date}}</span></a>
+                {{- end -}}
+            </td>
+        {{end}}
     </tr>
 {{end}}
 

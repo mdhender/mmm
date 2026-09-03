@@ -238,14 +238,17 @@ optimizing (TS-4). The register avoids the join twice over: `selectEntry` reads 
 and the first category with two correlated subqueries rather than a `GROUP BY` that would then
 have to be undone to get the count back.
 
-**What follows from it, and is not built yet.**
+**What follows from it.**
 
-- **Editing a transaction rewrites its splits.** Because the category is not a column, changing
-  one is not an `UPDATE` of the parent row — it is a replacement of child rows, inside the same
-  database transaction, guarded by the parent's `updated_at` (CO-3). Any `transaction.Update`
-  has to be written that way.
+- **Editing a transaction rewrites its splits**, and `transaction.Update` does exactly that.
+  Because the category is not a column, changing one is not an `UPDATE` of the parent row — it is
+  a replacement of child rows, inside the same database transaction, guarded by the parent's
+  `updated_at` (CO-3). `Edit.Splits` is a `*[]Split` so that nil can mean *leave them alone*,
+  which is what lets the register's edit form change the payee of a transaction split three ways
+  without flattening it; the invariant is still checked against whichever set will be stored, so
+  changing that transaction's amount is refused rather than quietly breaking it.
 - **Deleting a transaction takes its splits with it**, by cascade, with no extra statement — but
-  only while `foreign_keys` stays on.
+  only while `foreign_keys` stays on. `transaction.Delete` relies on it.
 - **There is no `splits_category` index.** The draft proposed one. It has not been added because
   nothing reads splits by category yet; the reporting query above is the feature that would
   justify it, and it should arrive with that feature rather than in advance of it.

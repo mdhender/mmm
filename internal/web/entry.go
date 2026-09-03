@@ -61,8 +61,12 @@ type entry struct {
 // amount" is the same dead end an error page without a next step would be
 // (SPECIFICATION.md RG-4).
 //
+// action names the button the reader is to press: "Add" on the register's entry
+// form, "Save" on the edit form. One set of rules serves both, and neither is
+// told to press a button that is not on the page.
+//
 // It is pure so the rules can be tested without an HTTP request or a database.
-func parseEntryForm(v url.Values, acct account.Account) (entry, entryForm, string) {
+func parseEntryForm(v url.Values, acct account.Account, action string) (entry, entryForm, string) {
 	form := entryForm{
 		Date:        strings.TrimSpace(v.Get("date")),
 		CheckNumber: strings.TrimSpace(v.Get("check_number")),
@@ -74,24 +78,24 @@ func parseEntryForm(v url.Values, acct account.Account) (entry, entryForm, strin
 	}
 
 	if form.Date == "" {
-		return entry{}, form, "Every entry needs a date. Type the date it happened as YYYY-MM-DD, then press Add again."
+		return entry{}, form, "Every entry needs a date. Type the date it happened as YYYY-MM-DD, then press " + action + " again."
 	}
 	// The date is parsed here as well as in transaction.Create. Create's job is
 	// to refuse bad data; this one's is to say something the reader can act on.
 	if _, err := time.Parse(transaction.DateLayout, form.Date); err != nil {
 		return entry{}, form, fmt.Sprintf(
-			"%q is not a calendar date. Write the date as YYYY-MM-DD, for example 2026-09-01, then press Add again.", form.Date)
+			"%q is not a calendar date. Write the date as YYYY-MM-DD, for example 2026-09-01, then press %s again.", form.Date, action)
 	}
 
 	if form.Payee == "" {
-		return entry{}, form, "Every entry needs a payee. Type who was paid, or who paid you, then press Add again."
+		return entry{}, form, "Every entry needs a payee. Type who was paid, or who paid you, then press " + action + " again."
 	}
 
 	switch {
 	case form.Payment != "" && form.Deposit != "":
-		return entry{}, form, "An entry is a payment or a deposit, not both. Clear whichever box does not apply, then press Add again."
+		return entry{}, form, "An entry is a payment or a deposit, not both. Clear whichever box does not apply, then press " + action + " again."
 	case form.Payment == "" && form.Deposit == "":
-		return entry{}, form, "Every entry needs an amount. Type it under Payment if money left the account, or under Deposit if money arrived, then press Add again."
+		return entry{}, form, "Every entry needs an amount. Type it under Payment if money left the account, or under Deposit if money arrived, then press " + action + " again."
 	}
 
 	text, box := form.Deposit, "Deposit"
@@ -99,7 +103,7 @@ func parseEntryForm(v url.Values, acct account.Account) (entry, entryForm, strin
 		text, box = form.Payment, "Payment"
 	}
 
-	amount, problem := parseEntryAmount(text, box, acct.Currency)
+	amount, problem := parseEntryAmount(text, box, action, acct.Currency)
 	if problem != "" {
 		return entry{}, form, problem
 	}
@@ -142,10 +146,10 @@ func parseEntryForm(v url.Values, acct account.Account) (entry, entryForm, strin
 // money went, so a sign is refused rather than interpreted. Scale is the money
 // package's rule, not one restated here, so a third decimal place is refused in
 // USD and accepted in KWD without this function knowing either.
-func parseEntryAmount(text, box string, cur money.Currency) (money.Money, string) {
+func parseEntryAmount(text, box, action string, cur money.Currency) (money.Money, string) {
 	if strings.HasPrefix(text, "-") || strings.HasPrefix(text, "+") {
 		return money.Money{}, fmt.Sprintf(
-			"Type the amount under %s without a sign; the box already says which way the money went. Remove the sign, then press Add again.", box)
+			"Type the amount under %s without a sign; the box already says which way the money went. Remove the sign, then press %s again.", box, action)
 	}
 
 	amount, err := money.ParseDecimal(text, cur)
@@ -153,17 +157,17 @@ func parseEntryAmount(text, box string, cur money.Currency) (money.Money, string
 		if scale, ok := money.Scale(cur); ok {
 			if _, frac, hasFrac := strings.Cut(text, "."); hasFrac && len(frac) > scale {
 				return money.Money{}, fmt.Sprintf(
-					"%s is recorded to %d decimal places, so %q is more precise than this account can hold. Round it, then press Add again.",
-					cur, scale, text)
+					"%s is recorded to %d decimal places, so %q is more precise than this account can hold. Round it, then press %s again.",
+					cur, scale, text, action)
 			}
 		}
 		return money.Money{}, fmt.Sprintf(
-			"%q is not an amount. Type digits and at most one decimal point, such as 84.17, then press Add again.", text)
+			"%q is not an amount. Type digits and at most one decimal point, such as 84.17, then press %s again.", text, action)
 	}
 
 	if amount.IsZero() {
 		return money.Money{}, fmt.Sprintf(
-			"An entry for zero would not change the balance. Type the amount under %s, then press Add again.", box)
+			"An entry for zero would not change the balance. Type the amount under %s, then press %s again.", box, action)
 	}
 
 	return amount, ""
@@ -212,7 +216,7 @@ func (s *Server) handleCreateTransaction(w http.ResponseWriter, r *http.Request,
 
 	// PostForm, not Form: only what was typed into the form counts, so a value
 	// in the query string cannot stand in for a field.
-	ent, form, problem := parseEntryForm(r.PostForm, acct)
+	ent, form, problem := parseEntryForm(r.PostForm, acct, "Add")
 	if problem != "" {
 		// 422: the request was well formed and understood, and refused on its
 		// contents. The page comes back with the entry still in it.

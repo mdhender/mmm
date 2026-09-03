@@ -1,0 +1,59 @@
+{{define "main"}}
+    {{- /* RG-3: removing a transaction cannot be undone from inside the program,
+           so it is asked about rather than done on one press. The whole
+           transaction is shown, because "are you sure?" about a row the reader
+           cannot see is not a question they can answer. */ -}}
+    <div class="register-head">
+        <h1>Remove this transaction?</h1>
+        <p class="muted">From {{.Account.Name}} &middot; {{.Currency}}</p>
+    </div>
+
+    <dl class="txn-facts">
+        <dt>Date</dt>
+        <dd><code>{{.Date}}</code></dd>
+        {{if .CheckNumber}}
+            <dt>Num</dt>
+            <dd><code>{{.CheckNumber}}</code></dd>
+        {{end}}
+        <dt>Payee</dt>
+        <dd>{{.Payee}}</dd>
+        <dt>Category</dt>
+        <dd>{{.Category}}</dd>
+        {{if .Memo}}
+            <dt>Memo</dt>
+            <dd>{{.Memo}}</dd>
+        {{end}}
+        <dt>Amount</dt>
+        <dd><code>{{.Amount}} {{.Currency}}</code></dd>
+        <dt>Status</dt>
+        <dd>{{.StatusLabel}}</dd>
+    </dl>
+
+    <p>
+        The transaction is removed from the register and the balances are recomputed without it.
+        {{if .IsSplit}}
+            The {{.SplitCount}} parts it was divided among go with it. The categories themselves
+            are not touched, and neither is anything else in the checkbook.
+        {{else}}
+            The category it was filed under is not touched, and neither is anything else in the
+            checkbook.
+        {{end}}
+    </p>
+    <p class="muted">
+        Nothing in the program undoes this. Your backups still hold the transaction, so a copy
+        taken before now is the way back; if you have not taken one recently, press <em>Back up
+        now</em> first.
+    </p>
+
+    <form method="post" action="/accounts/{{.Account.ID}}/transactions/{{.ID}}/delete">
+        {{- /* The version this page was drawn for. If another window changed the
+               transaction while this page sat open, it is no longer the one that
+               was confirmed, and the removal is refused rather than applied to
+               something the reader was not shown (CO-3). */ -}}
+        <input type="hidden" name="updated_at" value="{{.Token}}">
+        <div class="entry-fields">
+            <div class="f-add"><button type="submit" class="danger">Remove transaction</button></div>
+            <div class="f-add"><a class="cta" href="/accounts/{{.Account.ID}}#txn-{{.ID}}">Keep it</a></div>
+        </div>
+    </form>
+{{end}}

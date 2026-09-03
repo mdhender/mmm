@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.21.1-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.22.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -23,6 +23,7 @@ It can:
 
 - create an account, with a kind, a currency, and an opening balance
 - enter a transaction into an account, with an optional category
+- change a transaction already entered, and remove one
 - mark a transaction cleared, and mark it not cleared again
 - write a verified, timestamped backup into a `backups` folder beside the database
 - list the backups it can find, and replace the checkbook with one of them in a single press,
@@ -35,9 +36,9 @@ It can:
 - stop the program from the browser
 
 It does not change an account once created — rename it, change its currency, close it, or remove
-it — and it does not change or delete transactions already entered, split a transaction among
-several categories, record a transfer between accounts, reconcile, import, export, search, or
-produce reports. There is no terminal interface and no command-line subcommand.
+it — and it does not split a transaction among several categories, record a transfer between
+accounts, reconcile, import, export, search, or produce reports. There is no terminal interface
+and no command-line subcommand.
 
 ## Starting the program
 
@@ -214,6 +215,7 @@ recorded.
 | Amount | Signed amount; negative amounts are shown in red |
 | ✓ | Status; see below |
 | Balance | Account balance through this row, inclusive |
+| (unlabelled) | **Edit**, opening the transaction to change or remove it. Blank on a reconciled row; the column is absent altogether on a read-only checkbook. |
 
 ### Category column
 
@@ -320,6 +322,61 @@ time.
 If the entry is refused, the register comes back with the entry still in the form and a message
 above it saying what was wrong and what to do about it. Nothing is written. The transaction and
 its category are written together or not at all.
+
+### Changing a transaction
+
+**Edit**, at the end of a register row, opens that transaction in a form of its own. It is the
+entry form's fields, filled in, with the amount back in the box that says which way the money
+went: a payment of `-14.75` is shown as `14.75` under Payment. The same rules apply and the same
+refusals are given, naming **Save** rather than **Add**.
+
+| Field | Changed by this form |
+| --- | --- |
+| Date, Num, Payee, Memo | Yes |
+| Category | Yes, unless the transaction is split |
+| Payment / Deposit | Yes, unless the transaction is split |
+| Cleared or uncleared | No. That is a fact about the bank, marked in the register's status column |
+
+Clearing the Category box removes the category and leaves the transaction `Uncategorized`, which
+is a normal state. Typing a name that does not exist creates it, as on the entry form; the
+category a transaction leaves behind is not removed.
+
+**A transaction split among several categories keeps its parts.** This release has no split
+editor, so on such a transaction the category and the amount are shown rather than offered —
+greyed and dashed, and named in a note under the form — and everything else can still be changed.
+A change that would alter the amount is refused with a message saying so, because the parts would
+no longer add up to it. To change the amount, remove the transaction and enter it again.
+
+**A reconciled transaction cannot be changed.** There is no **Edit** link on its row, and the
+address answers with a page explaining why: a completed reconciliation records a fact, and the
+register does not rewrite it. Nothing is written.
+
+On success the browser returns to the register, positioned on the row, with every running balance
+and total recalculated. Reloading that page does not apply the change a second time.
+
+If the same account is open in more than one window, a change made against a transaction that has
+since changed elsewhere is **refused, not applied**. The form comes back with what you typed still
+in it, a message saying what the transaction now reads, and the current version attached — press
+**Save** again to apply your version over that one, deliberately, or leave the page to leave it
+alone.
+
+### Removing a transaction
+
+**Remove this transaction**, at the foot of the edit form, asks first. The page shows the whole
+transaction — date, number, payee, category, memo, amount, and status — because a question about a
+row you cannot see is not one you can answer.
+
+Removing it takes its split parts with it and recalculates every balance without it. The
+categories it named are not removed, and nothing else in the checkbook changes.
+
+**Nothing in the program undoes this.** A backup taken beforehand still holds the transaction, and
+restoring one is the way back; press **Back up now** first if you have not taken one recently.
+
+A reconciled transaction cannot be removed, for the reason it cannot be changed. A removal
+confirmed against a transaction that has since changed in another window is refused, and the page
+says so: it is no longer the transaction that was shown.
+
+On success the browser returns to the register and says what happened.
 
 ### A demo is marked as one
 
@@ -568,6 +625,9 @@ contacts GitHub.
 | `/accounts/N` | The register for account `N`. Stable: an account's number is never reassigned. |
 | `POST /accounts/N/transactions` | Enters a transaction into account `N`. Answers with a redirect back to the register. |
 | `POST /accounts/N/transactions/M/status` | Marks transaction `M` cleared or uncleared. Answers with the row and the totals, or with a redirect when the request did not come from the page's script. |
+| `/accounts/N/transactions/M/edit` | The form for changing transaction `M`. |
+| `POST /accounts/N/transactions/M` | Changes transaction `M`. Answers with a redirect back to the register. |
+| `/accounts/N/transactions/M/delete` | `GET` asks before removing transaction `M`; `POST` removes it and redirects to the register. |
 | `/backup` | `POST` only. Writes a verified backup and redirects back to the page it was pressed from. Works with no checkbook open, on the file just closed. |
 | `/checkbook` | The page shown when no checkbook is open. Redirects to `/` when one is. |
 | `/checkbook/close` | `GET` asks; `POST` closes. |

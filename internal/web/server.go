@@ -247,6 +247,15 @@ func (s *Server) routes() {
 	// unmatched method on a register URL still gets a 405 from the mux.
 	s.mux.HandleFunc("POST /accounts/{id}/transactions", s.withWritableCheckbook(s.handleCreateTransaction))
 	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}/status", s.withWritableCheckbook(s.handleSetStatus))
+	// Changing and removing a transaction (RG-2). Both are asked for on a page
+	// of their own and answered with a redirect: an edit moves the running
+	// balance of every row below it and a removal moves the totals besides, so
+	// unlike the cleared mark there is no fragment to swap.
+	s.mux.HandleFunc("GET /accounts/{id}/transactions/{txn}/edit", s.withWritableCheckbook(s.handleEditForm))
+	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}", s.withWritableCheckbook(s.handleUpdateTransaction))
+	// Removing is destructive, so it is confirmed first (RG-3).
+	s.mux.HandleFunc("GET /accounts/{id}/transactions/{txn}/delete", s.withWritableCheckbook(s.handleConfirmDelete))
+	s.mux.HandleFunc("POST /accounts/{id}/transactions/{txn}/delete", s.withWritableCheckbook(s.handleDeleteTransaction))
 
 	// The control routes. They act on the file or on the program rather than on
 	// a record, so they are POST only and go through the same-origin check in
@@ -329,7 +338,7 @@ func parsePages() (map[string]*template.Template, error) {
 		pages[base] = t
 	}
 
-	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml", "new-account.gohtml", "close-checkbook.gohtml", "restore.gohtml", "restore-confirm.gohtml"} {
+	for _, required := range []string{"register.gohtml", "empty.gohtml", "error.gohtml", "new-account.gohtml", "close-checkbook.gohtml", "restore.gohtml", "restore-confirm.gohtml", "edit-transaction.gohtml", "delete-transaction.gohtml"} {
 		if pages[required] == nil {
 			return nil, fmt.Errorf("web: missing template %s", required)
 		}

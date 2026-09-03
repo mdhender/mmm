@@ -14,10 +14,10 @@ apart so that none of them has to be three things at once.
 [How to create your first checkbook](how-to/create-your-first-checkbook.md).
 
 **A caution before you plan around it:** this release keeps a register — it creates accounts, takes
-transactions, marks them cleared, backs itself up, and restores from a backup in one press. It
-cannot yet change or delete anything already entered, and it cannot split, transfer, import,
-export, or reconcile. Every document below says so where it matters, but it is easier to hear once,
-up front.
+transactions, changes and removes them, marks them cleared, backs itself up, and restores from a
+backup in one press. It cannot yet split a transaction among several categories, transfer between
+accounts, import, export, search, or reconcile. Every document below says so where it matters, but
+it is easier to hear once, up front.
 
 ## How-to guides
 
