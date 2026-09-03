@@ -78,3 +78,11 @@ the specification wins:
 - [local-web-ui.md](local-web-ui.md), [htmx-web-ui.md](htmx-web-ui.md),
   [local-text-ui.md](local-text-ui.md)
 - [inspiration.md](inspiration.md)
+
+Architecture decision records in [`adrs/`](adrs) are a third thing again: a decision that has been
+made, with the reasoning that made it and what follows from it. They record what the code does,
+not what someone hopes it will.
+
+- [1. Categories live on splits, not on transactions](adrs/0001-categories-live-on-splits.md) —
+  why a transaction carries no category, what an uncategorized one looks like, and what an edit
+  form will have to do about it
