@@ -654,6 +654,51 @@ func TestSplitKeepsASplitTransactionWhole(t *testing.T) {
 	}
 }
 
+// TestTheSplitEditorSaysEmpty guards a word this program cannot afford to use
+// twice.
+//
+// "Cleared" is a status a transaction is in -- the bank showed it -- so "clear
+// the box" would be the same word for a mark against the bank and for taking
+// text out of an input. The glossary settles it: emptying is "empty", and clear
+// keeps its one meaning. The page and its refusals are checked together, because
+// a message is as much of the interface as the note under the form is.
+//
+// The test's own name is part of the fixture: an in-memory store is named after
+// it and BK-3 prints that name in the footer, so a test called ...SaysClear
+// fails itself.
+func TestTheSplitEditorSaysEmpty(t *testing.T) {
+	store := open(t)
+	acct := seed(t, store)
+	h := server(t, store)
+
+	// Anything but the status word. Taking "cleared" out first also takes
+	// "uncleared" with it, so what is left is the verb this page must not use.
+	looseClear := func(body string) bool {
+		return strings.Contains(strings.ReplaceAll(strings.ToLower(body), "cleared", ""), "clear")
+	}
+
+	pages := map[string]string{
+		"the editor": get(t, h, "/accounts/1/transactions/2/edit").Body.String(),
+		"a remainder": post(t, h, "/accounts/1/transactions/2",
+			splitValues(t, store, acct, 2, "84.17", splitLine{"Groceries", "", "70.00"})).Body.String(),
+		"a line for zero": post(t, h, "/accounts/1/transactions/2",
+			splitValues(t, store, acct, 2, "84.17", splitLine{"Groceries", "", "0.00"})).Body.String(),
+	}
+	for name, body := range pages {
+		if looseClear(body) {
+			t.Errorf("%s says clear where it means empty", name)
+		}
+	}
+
+	// And it does say the word it is supposed to say.
+	if !strings.Contains(pages["the editor"], "Empty the Amount box") {
+		t.Error("the note does not tell the reader how a line is taken away")
+	}
+	if !strings.Contains(pages["the editor"], "saved to the checkbook only if it has an Amount") {
+		t.Error("the note does not say what makes a line a line")
+	}
+}
+
 // TestSplitRefusesAStaleToken is CO-3 over a whole set of parts: the second tab
 // is refused, the first tab's lines stand, and what is stored is one of the two
 // divisions rather than a mixture of them.

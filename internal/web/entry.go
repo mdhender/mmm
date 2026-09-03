@@ -93,7 +93,7 @@ func parseEntryForm(v url.Values, acct account.Account, action string) (entry, e
 
 	switch {
 	case form.Payment != "" && form.Deposit != "":
-		return entry{}, form, "An entry is a payment or a deposit, not both. Clear whichever box does not apply, then press " + action + " again."
+		return entry{}, form, "An entry is a payment or a deposit, not both. Empty whichever box does not apply, then press " + action + " again."
 	case form.Payment == "" && form.Deposit == "":
 		return entry{}, form, "Every entry needs an amount. Type it under Payment if money left the account, or under Deposit if money arrived, then press " + action + " again."
 	}
@@ -110,7 +110,7 @@ func parseEntryForm(v url.Values, acct account.Account, action string) (entry, e
 	// Zero is refused here rather than inside parseEntryAmount, because what
 	// zero means depends on what is being typed: an entry for nothing would not
 	// change the balance, while a line of a split for nothing is a line the
-	// reader meant to fill in or to clear.
+	// reader meant to fill in or to empty.
 	if amount.IsZero() {
 		return entry{}, form, fmt.Sprintf(
 			"An entry for zero would not change the balance. Type the amount under %s, then press %s again.", box, action)

@@ -26,6 +26,11 @@ rather than leaving the cell blank.
 splits, categories. One file, ordinarily called `checkbook.db`. The bottom of every page names the
 one this window is editing.
 
+**Clear** — to mark that the bank has shown a transaction, using the mark in the register's status
+column. That is the only thing the word means here. It is never used for taking text out of a box:
+that is **empty**, and keeping the two apart matters in a program where *cleared* is a status a
+transaction can be in.
+
 **Cleared** — the bank has shown this transaction on your statement. A lowercase `c` in the
 register's status column. Cleared is not the same as **reconciled**, and the register keeps them
 apart.
@@ -42,6 +47,12 @@ marked, top and bottom, in amber.
 **Ending balance** — every transaction in the account, added up. What you have, according to your
 own records. Shown beside the **cleared balance**, which counts only the transactions the bank has
 shown.
+
+**Empty** — to take what is typed out of a box, leaving it blank. It is the word for the act, so
+that **clear** can keep its one meaning. Emptying is how things are removed on a form that has no
+delete button: empty a line's Amount and that part of a split is gone when you save; empty the
+Category box and the transaction is left uncategorized. Emptying a box is not the same as typing
+`0` in it, which is an amount, and an amount of nothing is refused.
 
 **Ephemeral** — held in memory and kept nowhere. Used of the demo. The mark is a property of the
 database rather than of how the program was started, so anything that keeps nothing says so.
@@ -61,6 +72,12 @@ offering it and then refusing.
 **Reconcile** — agreeing your register with a bank statement, line by line, and recording that you
 did. **Not built.** When it is, it will never manufacture agreement: no adjustment entries, and no
 edits to transactions you already reconciled.
+
+The ordinary sense of the word is the one to watch. Outside this program, to *reconcile* a
+difference often means to make it go away — to plug the gap so two figures match. Here it means
+the opposite: the difference is found, shown, and left for you to explain. A program that closed
+the gap on your behalf would be telling you your money agrees when it does not, which is the
+one thing a register must never do.
 
 **Reconciled** — recorded as agreeing with a statement. A capital `R` in the status column.
 Stronger than **cleared**: cleared says the bank showed it, reconciled says you checked it against

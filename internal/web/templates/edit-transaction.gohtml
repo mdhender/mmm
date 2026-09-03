@@ -140,10 +140,12 @@
 
         <p class="muted entry-note">
             {{if .Split}}
-                Each line is typed without a sign and takes this transaction's direction. A line
-                with no category is a part you have not decided on yet; clear a line's amount to
-                take the line away, and clear them all to leave the transaction uncategorized.
-                The parts have to add up to the transaction before it can be saved.
+                A line is saved to the checkbook only if it has an Amount. Empty the Amount box
+                and that line is gone when you save, whatever is still typed beside it &mdash; give
+                its share to another line, or the parts will no longer add up. Empty every line to
+                leave the transaction uncategorized. Amounts are typed without a sign and take this
+                transaction's direction; a line with no category is a part you have not decided on
+                yet.
             {{else}}
                 Amounts are in {{.Currency}}, without a sign. Whether the bank has shown this
                 transaction is marked in the register's status column, not here: that is a fact

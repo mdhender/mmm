@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.23.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.23.1-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -337,7 +337,7 @@ refusals are given, naming **Save** rather than **Add**.
 | Payment / Deposit | Yes |
 | Cleared or uncleared | No. That is a fact about the bank, marked in the register's status column |
 
-Clearing the Category box removes the category and leaves the transaction `Uncategorized`, which
+Emptying the Category box removes the category and leaves the transaction `Uncategorized`, which
 is a normal state. Typing a name that does not exist creates it, as on the entry form; the
 category a transaction leaves behind is not removed.
 
@@ -358,8 +358,11 @@ Each line has a Category, a Memo, and an Amount:
   part takes the transaction's own direction, so the parts of a payment are payments.
 - **A line with no category is allowed.** It is a part of the amount you have not decided on yet,
   and it is stored as a part with no category rather than as a placeholder one.
-- **Clearing a line's amount takes the line away** when you save. There is no separate remove
-  button, because emptying the line already is one.
+- **A line is saved to the checkbook only if it has an Amount.** Empty the Amount box and that
+  line is gone when you save, whatever is still typed in its Category and Memo. There is no
+  separate remove button, because emptying the Amount already is one. Note that emptying a line
+  does not move the money it held: give that share to another line, or the parts will no longer
+  add up and Save will refuse.
 - **Add a line** adds a blank one. It writes nothing, and it works whether or not the browser ran
   the page's script.
 
@@ -368,7 +371,7 @@ Under the lines are three figures: the transaction's amount, what the lines assi
 
 **A transaction can only be saved when nothing is unassigned.** A remainder is refused with a
 message naming all three figures, and nothing at all is written — not the parts, and not the
-amount you were dividing. Clearing every line is not a remainder: it leaves the transaction
+amount you were dividing. Emptying every line is not a remainder: it leaves the transaction
 `Uncategorized`, which is a normal state.
 
 Leaving one line filled is how a divided transaction becomes an ordinary one again. It opens on

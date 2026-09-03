@@ -362,7 +362,7 @@ func planSplits(lines []splitLine, amount money.Money) ([]plannedSplit, string) 
 // a part of a transaction is typed the way the transaction is, so the same
 // function refuses it and says why. Zero is the one thing a line means
 // differently -- a part of nothing is not an entry that would not change the
-// balance, it is a line the reader meant to fill in or to clear.
+// balance, it is a line the reader meant to fill in or to empty.
 func parseSplitAmount(text string, line int, cur money.Currency) (money.Money, string) {
 	amount, problem := parseEntryAmount(text, fmt.Sprintf("line %d", line), "Save", cur)
 	if problem != "" {
@@ -370,7 +370,7 @@ func parseSplitAmount(text string, line int, cur money.Currency) (money.Money, s
 	}
 	if amount.IsZero() {
 		return money.Money{}, fmt.Sprintf(
-			"Line %d is for zero, which assigns nothing to a category. Type an amount on it, or clear it to take the line away, then press Save again.", line)
+			"Line %d is for zero, which assigns nothing to a category. Type an amount on it, or empty the box to take the line away, then press Save again.", line)
 	}
 	return amount, ""
 }
@@ -405,12 +405,12 @@ func remainderProblem(amount, assigned, unassigned money.Money) string {
 	if unassigned.IsNegative() {
 		return fmt.Sprintf(
 			"The parts add up to %s and this transaction is %s, so they assign %s more than there is. Nothing was changed. "+
-				"Lower a line or clear one to take it away, then press Save again.",
+				"Lower a line, or empty one's Amount to take it away, then press Save again.",
 			formatAmount(assigned), formatAmount(amount.Abs()), formatAmount(unassigned.Abs()))
 	}
 	return fmt.Sprintf(
 		"The parts add up to %s and this transaction is %s, so %s is still unassigned. Nothing was changed. "+
-			"Assign the rest, or clear every line to leave the transaction uncategorized, then press Save again.",
+			"Assign the rest, or empty every line to leave the transaction uncategorized, then press Save again.",
 		formatAmount(assigned), formatAmount(amount.Abs()), formatAmount(unassigned))
 }
 
