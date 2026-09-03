@@ -56,11 +56,12 @@ func (s *Server) handleConfirmDelete(w http.ResponseWriter, r *http.Request, cb 
 		return
 	}
 
-	label := detail.Category
-	if detail.IsSplit() {
-		label = "Split " + strconv.Itoa(detail.SplitCount) + " ways"
-	} else if label == "" {
-		label = "Uncategorized"
+	label := "Uncategorized"
+	switch {
+	case detail.IsSplit():
+		label = "Split " + strconv.Itoa(detail.SplitCount()) + " ways"
+	case len(detail.Splits) == 1 && detail.Splits[0].Category != "":
+		label = detail.Splits[0].Category
 	}
 
 	s.render(w, r, http.StatusOK, "delete-transaction.gohtml", deletePage{
@@ -76,7 +77,7 @@ func (s *Server) handleConfirmDelete(w http.ResponseWriter, r *http.Request, cb 
 		Amount:      formatAmount(detail.Amount),
 		StatusLabel: statusLabel(detail.Status),
 		IsSplit:     detail.IsSplit(),
-		SplitCount:  detail.SplitCount,
+		SplitCount:  detail.SplitCount(),
 		Token:       storage.FormatTime(detail.UpdatedAt),
 	})
 }

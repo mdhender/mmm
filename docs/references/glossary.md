@@ -80,8 +80,9 @@ computed once, in one place, so every interface shows the same number.
 
 **Split** — one transaction divided among several categories: a shop where half was groceries and
 half was household. The register shows *— Split —* rather than naming one of them, because naming
-the first would suggest the whole amount went there. The parts must add up to the transaction's
-amount.
+the first would suggest the whole amount went there; the parts themselves are on the edit form,
+a line each. The parts must add up to the transaction's amount, and a part may name no category at
+all — that is a share of the money you have not decided on yet.
 
 **Statement date** — the closing date of a bank statement, used in reconciling. A calendar date,
 not an instant: it is never shifted into a timezone.

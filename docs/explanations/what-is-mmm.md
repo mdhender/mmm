@@ -125,9 +125,9 @@ Worth being blunt, because everything above describes the intent and the softwar
 yet.
 
 Today `mmm` **keeps** a register: it creates accounts, enters transactions, changes and removes
-them, marks them cleared, and backs itself up — writing a copy it has read back before naming, and
-putting one back in a single press. It cannot yet split a transaction among several categories,
-record a transfer, import, export, search, or reconcile. The version number starts with a zero and
+them, divides one among several categories, marks them cleared, and backs itself up — writing a
+copy it has read back before naming, and putting one back in a single press. It cannot yet record
+a transfer, import, export, search, or reconcile. The version number starts with a zero and
 ends in `beta` for good reason.
 
 What exists underneath is the part everything else has to stand on: exact money, a schema that

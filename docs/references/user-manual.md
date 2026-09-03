@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.22.0-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.23.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -24,6 +24,7 @@ It can:
 - create an account, with a kind, a currency, and an opening balance
 - enter a transaction into an account, with an optional category
 - change a transaction already entered, and remove one
+- divide a transaction among several categories, and change how a divided one is divided
 - mark a transaction cleared, and mark it not cleared again
 - write a verified, timestamped backup into a `backups` folder beside the database
 - list the backups it can find, and replace the checkbook with one of them in a single press,
@@ -36,9 +37,8 @@ It can:
 - stop the program from the browser
 
 It does not change an account once created — rename it, change its currency, close it, or remove
-it — and it does not split a transaction among several categories, record a transfer between
-accounts, reconcile, import, export, search, or produce reports. There is no terminal interface
-and no command-line subcommand.
+it — and it does not record a transfer between accounts, reconcile, import, export, search, or
+produce reports. There is no terminal interface and no command-line subcommand.
 
 ## Starting the program
 
@@ -225,8 +225,8 @@ recorded.
 | `— Split —` | The transaction is divided among more than one category |
 | `Uncategorized` (grey) | The transaction has no category |
 
-A split transaction names no category. The individual parts of a split are not displayed in this
-release.
+A split transaction names no category, because naming the first of several would suggest the whole
+amount went there. Its parts are shown on the edit form; the register row is not expanded.
 
 ### Status column
 
@@ -333,19 +333,48 @@ refusals are given, naming **Save** rather than **Add**.
 | Field | Changed by this form |
 | --- | --- |
 | Date, Num, Payee, Memo | Yes |
-| Category | Yes, unless the transaction is split |
-| Payment / Deposit | Yes, unless the transaction is split |
+| Category, or the parts a split is divided among | Yes |
+| Payment / Deposit | Yes |
 | Cleared or uncleared | No. That is a fact about the bank, marked in the register's status column |
 
 Clearing the Category box removes the category and leaves the transaction `Uncategorized`, which
 is a normal state. Typing a name that does not exist creates it, as on the entry form; the
 category a transaction leaves behind is not removed.
 
-**A transaction split among several categories keeps its parts.** This release has no split
-editor, so on such a transaction the category and the amount are shown rather than offered —
-greyed and dashed, and named in a note under the form — and everything else can still be changed.
-A change that would alter the amount is refused with a message saying so, because the parts would
-no longer add up to it. To change the amount, remove the transaction and enter it again.
+### Splitting a transaction among several categories
+
+The edit form has two shapes, and a transaction opens in whichever one fits it: **one Category
+box** when it has one category or none, and **a line per part** otherwise. A transaction with a
+single part also opens on the lines when the one box could not show the whole of it — when that
+part carries a memo of its own, or names no category.
+
+**Split this transaction**, under the plain form, opens the line editor. It brings whatever is in
+the Category box onto the first line with the whole amount, and puts a blank line under it. The
+entry form under the register does not divide a transaction: enter it, then press **Edit**.
+
+Each line has a Category, a Memo, and an Amount:
+
+- **Amounts are typed without a sign**, as they are in the Payment and Deposit boxes above. Every
+  part takes the transaction's own direction, so the parts of a payment are payments.
+- **A line with no category is allowed.** It is a part of the amount you have not decided on yet,
+  and it is stored as a part with no category rather than as a placeholder one.
+- **Clearing a line's amount takes the line away** when you save. There is no separate remove
+  button, because emptying the line already is one.
+- **Add a line** adds a blank one. It writes nothing, and it works whether or not the browser ran
+  the page's script.
+
+Under the lines are three figures: the transaction's amount, what the lines assign, and what is
+**unassigned**. They are recalculated on every press.
+
+**A transaction can only be saved when nothing is unassigned.** A remainder is refused with a
+message naming all three figures, and nothing at all is written — not the parts, and not the
+amount you were dividing. Clearing every line is not a remainder: it leaves the transaction
+`Uncategorized`, which is a normal state.
+
+Leaving one line filled is how a divided transaction becomes an ordinary one again. It opens on
+the plain form next time.
+
+A transaction split among several categories still reads `— Split —` in the register.
 
 **A reconciled transaction cannot be changed.** There is no **Edit** link on its row, and the
 address answers with a page explaining why: a completed reconciliation records a fact, and the

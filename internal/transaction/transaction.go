@@ -438,26 +438,45 @@ RETURNING id, account_id, date, payee, memo, amount, status, check_number,
 	return txn, nil
 }
 
-// Detail is one transaction with what the register knows about its categories.
+// SplitDetail is one split with the name of the category it names.
+//
+// It is a read type, standing to Split as Entry stands to Transaction: a form
+// fills a box with a name, and the name is not on Split because Split is the
+// write type and a field the writer ignores is a second source of truth waiting
+// to disagree with the first.
+type SplitDetail struct {
+	Split
+
+	// Category is the category's name. It is empty when CategoryID is zero,
+	// which is a part of the amount assigned to no category yet -- what the
+	// nullable column is for.
+	Category string
+}
+
+// Detail is one transaction with the parts it is divided into.
 //
 // It is not an Entry, and the difference is the balance: a running balance is a
 // property of a row's position in a register, not of a transaction, and an Entry
 // carrying a meaningless one would be a number waiting to be printed by mistake.
+//
+// It carries the splits themselves, where an Entry carries only their count. The
+// register needs the count; a form that divides a transaction needs the rows.
 type Detail struct {
 	Transaction
 
-	// Category is the name to show, empty when there are no splits or the first
-	// has no category. SplitCount is how many splits there are; more than one
-	// means Category is only the first of several.
-	Category   string
-	SplitCount int
+	// Splits are the transaction's parts in id order. None means the
+	// transaction is uncategorized, which is a normal state and not an error.
+	Splits []SplitDetail
 }
 
 // IsSplit reports whether the transaction is divided among more than one
 // category.
-func (d Detail) IsSplit() bool { return d.SplitCount > 1 }
+func (d Detail) IsSplit() bool { return len(d.Splits) > 1 }
 
-// Get reads one of acct's transactions, with its category and split count.
+// SplitCount is how many parts the transaction is divided into.
+func (d Detail) SplitCount() int { return len(d.Splits) }
+
+// Get reads one of acct's transactions with its splits.
 //
 // It is what an edit form is built from, so it is scoped to the account for the
 // reason get is: the id comes from a URL, and a URL can be edited. An id
@@ -470,32 +489,15 @@ func Get(ctx context.Context, store *storage.Store, acct account.Account, id int
 	}
 	defer store.Put(conn)
 
-	stmt, err := conn.Prepare(selectEntry + `
- WHERE t.id = $id AND t.account_id = $account_id;`)
-	if err != nil {
-		return Detail{}, fmt.Errorf("get transaction: %w", err)
-	}
-	stmt.SetInt64("$id", id)
-	stmt.SetInt64("$account_id", acct.ID)
-	defer stmt.Reset()
-
-	hasRow, err := stmt.Step()
-	if err != nil {
-		return Detail{}, fmt.Errorf("get transaction: %w", err)
-	}
-	if !hasRow {
-		return Detail{}, fmt.Errorf("transaction %d: %w", id, ErrNotFound)
-	}
-
-	txn, err := scanTransaction(stmt, acct.Currency)
+	txn, err := get(conn, acct, id)
 	if err != nil {
 		return Detail{}, err
 	}
-	return Detail{
-		Transaction: txn,
-		Category:    stmt.GetText("category"),
-		SplitCount:  int(stmt.GetInt64("split_count")),
-	}, nil
+	splits, err := loadSplitDetails(conn, acct, id)
+	if err != nil {
+		return Detail{}, err
+	}
+	return Detail{Transaction: txn, Splits: splits}, nil
 }
 
 // get reads one of acct's transactions on an open connection.
@@ -820,17 +822,45 @@ func sameSplits(a, b []Split) bool {
 }
 
 // loadSplits reads a transaction's splits in id order on an open connection.
+//
+// It is loadSplitDetails without the names, rather than a second query, so the
+// set a write compares against and the set a form displays can never come back
+// in a different order.
 func loadSplits(conn *sqlite.Conn, acct account.Account, txnID int64) ([]Split, error) {
+	details, err := loadSplitDetails(conn, acct, txnID)
+	if err != nil {
+		return nil, err
+	}
+	if len(details) == 0 {
+		return nil, nil
+	}
+	splits := make([]Split, 0, len(details))
+	for _, d := range details {
+		splits = append(splits, d.Split)
+	}
+	return splits, nil
+}
+
+// loadSplitDetails reads a transaction's splits, with category names, in id
+// order on an open connection.
+//
+// The join is a LEFT JOIN because category_id is nullable: a part assigned to no
+// category yet is a row with no name, not a missing row.
+func loadSplitDetails(conn *sqlite.Conn, acct account.Account, txnID int64) ([]SplitDetail, error) {
 	stmt, err := conn.Prepare(`
-SELECT COALESCE(category_id, 0) AS category_id, amount, memo
-  FROM splits WHERE transaction_id = $transaction_id ORDER BY id;`)
+SELECT COALESCE(s.category_id, 0) AS category_id, s.amount, s.memo,
+       COALESCE(c.name, '') AS category
+  FROM splits s
+  LEFT JOIN categories c ON c.id = s.category_id
+ WHERE s.transaction_id = $transaction_id
+ ORDER BY s.id;`)
 	if err != nil {
 		return nil, fmt.Errorf("read splits: %w", err)
 	}
 	stmt.SetInt64("$transaction_id", txnID)
 	defer stmt.Reset()
 
-	var splits []Split
+	var splits []SplitDetail
 	for {
 		hasRow, err := stmt.Step()
 		if err != nil {
@@ -843,10 +873,13 @@ SELECT COALESCE(category_id, 0) AS category_id, amount, memo
 		if err != nil {
 			return nil, fmt.Errorf("read splits: %w", err)
 		}
-		splits = append(splits, Split{
-			CategoryID: stmt.GetInt64("category_id"),
-			Amount:     amount,
-			Memo:       stmt.GetText("memo"),
+		splits = append(splits, SplitDetail{
+			Split: Split{
+				CategoryID: stmt.GetInt64("category_id"),
+				Amount:     amount,
+				Memo:       stmt.GetText("memo"),
+			},
+			Category: stmt.GetText("category"),
 		})
 	}
 }

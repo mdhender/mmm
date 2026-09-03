@@ -107,6 +107,14 @@ func parseEntryForm(v url.Values, acct account.Account, action string) (entry, e
 	if problem != "" {
 		return entry{}, form, problem
 	}
+	// Zero is refused here rather than inside parseEntryAmount, because what
+	// zero means depends on what is being typed: an entry for nothing would not
+	// change the balance, while a line of a split for nothing is a line the
+	// reader meant to fill in or to clear.
+	if amount.IsZero() {
+		return entry{}, form, fmt.Sprintf(
+			"An entry for zero would not change the balance. Type the amount under %s, then press %s again.", box, action)
+	}
 
 	// A payment leaves the account, so it is stored negative. The negation goes
 	// through the money package rather than through the typed text, so nothing
@@ -140,12 +148,16 @@ func parseEntryForm(v url.Values, acct account.Account, action string) (entry, e
 	}, form, ""
 }
 
-// parseEntryAmount reads one of the two amount boxes as money in cur.
+// parseEntryAmount reads an amount box as money in cur.
 //
 // The amount is unsigned: the box it was typed in already says which way the
 // money went, so a sign is refused rather than interpreted. Scale is the money
 // package's rule, not one restated here, so a third decimal place is refused in
 // USD and accepted in KWD without this function knowing either.
+//
+// It reads the two boxes of the entry form and the amount on a line of the split
+// editor, which is why zero is not judged here: it is a different thing to say
+// on a line than in a box, and each caller says its own.
 func parseEntryAmount(text, box, action string, cur money.Currency) (money.Money, string) {
 	if strings.HasPrefix(text, "-") || strings.HasPrefix(text, "+") {
 		return money.Money{}, fmt.Sprintf(
@@ -163,11 +175,6 @@ func parseEntryAmount(text, box, action string, cur money.Currency) (money.Money
 		}
 		return money.Money{}, fmt.Sprintf(
 			"%q is not an amount. Type digits and at most one decimal point, such as 84.17, then press %s again.", text, action)
-	}
-
-	if amount.IsZero() {
-		return money.Money{}, fmt.Sprintf(
-			"An entry for zero would not change the balance. Type the amount under %s, then press %s again.", box, action)
 	}
 
 	return amount, ""

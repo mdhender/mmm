@@ -169,13 +169,13 @@ UI, not a row in `categories`.
 
 **The nullable `category_id` is a second way to say the same thing**, and it is worth naming
 rather than discovering. A split with `category_id IS NULL` is an amount assigned to no category
-— `transaction.Split.CategoryID` is `0` for it, and `insert` binds NULL. The browser never
-produces one today: `handleCreateTransaction` writes zero splits when no category is typed and
-exactly one when a category is. The column stays nullable because a split *editor* needs it —
-one line of a split can be filled in before its neighbour is, and refusing to store that would
-mean either a placeholder category or a form that cannot be saved half-finished. Anything
-reading splits must therefore handle NULL; `selectEntry` does it with
-`COALESCE(c.name, '')` over a `LEFT JOIN`.
+— `transaction.Split.CategoryID` is `0` for it, and `insert` binds NULL. **The split editor is
+what produces one**: a line whose Category box is empty stores NULL, which is how one line of a
+division is filled in before its neighbour, and how the household says that part of this went
+somewhere they have not decided on. The alternative would have been a placeholder category or a
+form that cannot be saved half-finished. Anything reading splits must therefore handle NULL;
+`selectEntry` does it with `COALESCE(c.name, '')` over a `LEFT JOIN`, and so does
+`loadSplitDetails`, which is what fills the editor's boxes.
 
 ## The invariant, and where it is enforced
 
@@ -244,16 +244,22 @@ have to be undone to get the count back.
   Because the category is not a column, changing one is not an `UPDATE` of the parent row — it is
   a replacement of child rows, inside the same database transaction, guarded by the parent's
   `updated_at` (CO-3). `Edit.Splits` is a `*[]Split` so that nil can mean *leave them alone*,
-  which is what lets the register's edit form change the payee of a transaction split three ways
-  without flattening it; the invariant is still checked against whichever set will be stored, so
-  changing that transaction's amount is refused rather than quietly breaking it.
+  which is what let the edit form change the payee of a transaction split three ways before there
+  was an editor to show them; the invariant is still checked against whichever set will be stored,
+  so an amount that no longer matches its parts is refused rather than quietly breaking them.
 - **Deleting a transaction takes its splits with it**, by cascade, with no extra statement — but
   only while `foreign_keys` stays on. `transaction.Delete` relies on it.
 - **There is no `splits_category` index.** The draft proposed one. It has not been added because
   nothing reads splits by category yet; the reporting query above is the feature that would
   justify it, and it should arrive with that feature rather than in advance of it.
-- **A split editor is the first thing that will produce a NULL `category_id`.** The paragraph
-  above is a promise the schema is already keeping.
+- **The split editor is what produces a NULL `category_id`.** It arrived in 0.23.0-beta, on the
+  edit form: `internal/web/edit.go` reads a line per part and `transaction.Detail` carries them,
+  with their category names, for the form to fill its boxes with. The paragraph above stopped
+  being a prediction.
+- **A split takes its parent's sign**, and the editor is where that shows: each line is typed
+  unsigned and stored with the transaction's direction, so the invariant stays a plain sum. It
+  forbids one real shape -- a $100 purchase recorded as $120 of groceries and a -$20 discount --
+  which is an amendment to this decision rather than something a form decides.
 
 ## Alternatives considered
 

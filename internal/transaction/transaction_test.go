@@ -1107,23 +1107,31 @@ func TestGetReadsOneTransaction(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.Payee != "Riba Smith" || got.Memo != "weekly" || got.CheckNumber != "101" ||
-		got.Amount.Decimal() != "-84.17" || got.Category != "Groceries" || got.SplitCount != 1 || got.IsSplit() {
+		got.Amount.Decimal() != "-84.17" || got.SplitCount() != 1 || got.IsSplit() {
 		t.Errorf("Get returned %+v", got)
+	}
+	if got.Splits[0].Category != "Groceries" || got.Splits[0].Amount.Decimal() != "-84.17" {
+		t.Errorf("the one part is %+v, want all of it in Groceries", got.Splits[0])
 	}
 	if !got.UpdatedAt.Equal(plain.UpdatedAt) {
 		t.Errorf("token = %s, want %s: the form would send back a stale one", got.UpdatedAt, plain.UpdatedAt)
 	}
 
+	// A split editor is built from the parts themselves, in id order, with the
+	// names a form fills its boxes with.
 	if got, err := transaction.Get(ctx, store, acct, split.ID); err != nil {
 		t.Fatalf("Get split: %v", err)
-	} else if got.SplitCount != 2 || !got.IsSplit() {
-		t.Errorf("split has %d splits, IsSplit = %v", got.SplitCount, got.IsSplit())
+	} else if got.SplitCount() != 2 || !got.IsSplit() {
+		t.Errorf("split has %d splits, IsSplit = %v", got.SplitCount(), got.IsSplit())
+	} else if got.Splits[0].Category != "Groceries" || got.Splits[0].Amount.Decimal() != "-90.00" ||
+		got.Splits[1].Category != "Household" || got.Splits[1].Amount.Decimal() != "-60.00" {
+		t.Errorf("the parts read back as %+v", got.Splits)
 	}
 
 	if got, err := transaction.Get(ctx, store, acct, bare.ID); err != nil {
 		t.Fatalf("Get uncategorized: %v", err)
-	} else if got.Category != "" || got.SplitCount != 0 {
-		t.Errorf("uncategorized transaction has category %q and %d splits", got.Category, got.SplitCount)
+	} else if got.SplitCount() != 0 || len(got.Splits) != 0 {
+		t.Errorf("uncategorized transaction has %d splits", got.SplitCount())
 	}
 
 	if _, err := transaction.Get(ctx, store, acct, plain.ID+9999); !errors.Is(err, transaction.ErrNotFound) {

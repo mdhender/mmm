@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `mmm` is a local-first household **checkbook** written in Go. The repository is early. The
 storage layer, the domain packages behind the register, and a web UI exist (`cmd/checkbook` serves
 it). The register creates accounts, displays them, takes new transactions, changes and removes
-them, and marks them cleared, and the checkbook itself can be backed up, closed, reopened, opened
-read-only, replaced by a backup in one press, and quit from the browser; editing an account,
-splitting a transaction, transfers, importing, and reconciling do not exist yet. Much of the code written here is still creating the application rather than
+them, divides one among several categories, and marks them cleared, and the checkbook itself can
+be backed up, closed, reopened, opened read-only, replaced by a backup in one press, and quit from
+the browser; editing an account, transfers, importing, and reconciling do not exist yet. Much of the code written here is still creating the application rather than
 modifying it.
 
 `SPECIFICATION.md` is the binding document: numbered, checkable requirements (`PL-`, `ST-`,
@@ -104,12 +104,17 @@ reuse them rather than becoming a second application.
   field (RC-3). Because the category is not a column on `transactions` (see
   `docs/adrs/0001-categories-live-on-splits.md`), an edit is an `UPDATE` of the parent **plus a
   replacement of the splits**, in the same transaction. `Edit.Splits` is a `*[]Split` and nil is
-  not the empty slice: nil leaves the stored splits alone, which is what lets the register's edit
-  form change the payee of a transaction split three ways without flattening it, while the empty
+  not the empty slice: nil leaves the stored splits alone -- which is what let the edit form change
+  the payee of a transaction split three ways before there was a split editor -- while the empty
   slice removes them and leaves it uncategorized. The invariant is checked against whichever set
-  will be stored, so changing a split transaction's amount is `ErrSplitTotal` rather than a
-  quietly broken record. An edit that changes nothing writes nothing, so a saved-but-unchanged
-  form does not make every other tab stale. `Delete` is a real delete -- no tombstone, no
+  will be stored, so an amount that no longer matches its parts is `ErrSplitTotal` rather than a
+  quietly broken record. **`Detail` carries the splits themselves** (`[]SplitDetail`, each a
+  `Split` with its category's name), which is what the split editor's boxes are filled from;
+  `Entry` still carries only `SplitCount`, because the register needs the count and not the rows.
+  `loadSplits` is `loadSplitDetails` without the names rather than a second query, so the set a
+  write compares against and the set a form shows can never come back in a different order. An edit
+  that changes nothing writes nothing, so a saved-but-unchanged form does not make every other tab
+  stale. `Delete` is a real delete -- no tombstone, no
   reversing entry; the splits go by `ON DELETE CASCADE` and BK-1's backups are the way back.
 - `internal/backup` — writes a verified, timestamped copy of a database (BK-2, BK-5), restores one
   (BK-4), lists the copies it can find (`Find`), and puts a restored one at the checkbook's name
@@ -519,7 +524,9 @@ HTML. No SQL and no balance arithmetic belong here.
   creating an account, and changing or removing a transaction are still plain POSTs and redirects
   — a new row changes the running balance of every row below it, an edit moves every balance below
   it, a removal moves the totals besides, and a new account changes the list beside every page, so
-  in none of those cases is there a fragment to swap.
+  in none of those cases is there a fragment to swap. The split editor's **Add a line** and
+  **Split this transaction** are the second htmx interaction: they write nothing and re-render
+  only the form, which `edit-transaction.gohtml` defines as `edit-form` for exactly that reason.
 - **Every htmx control is a real form that works without it.** The handler answers a fragment when
   `HX-Request` is set and a redirect otherwise, so the register keeps working if the script never
   loads. Keep it that way rather than putting `hx-` attributes on a bare element.
@@ -528,6 +535,18 @@ HTML. No SQL and no balance arithmetic belong here.
   a reloaded page will disagree. The row's last cell is the **Edit** link: it is *omitted* on a
   read-only register, where the header is omitted too, and *empty* on a reconciled row, where the
   header is not — the neighbours still have a column to fill.
+- **The split editor is the edit form in another mode, and the mode is a form field.** `split=1`
+  says which, so it survives a page that comes back with a problem on it and works with no script
+  at all; `postedLines` pairs the three same-named boxes of a line up by position. A line with a
+  blank amount is dropped on save -- that is the remove control, and it is why there is no cross
+  per line. Every line is typed unsigned and takes the parent's sign (ADR 1), reusing
+  `parseEntryAmount`; the zero check moved out of that function into its two callers, because a
+  part for nothing is not "an entry that would not change the balance". The remainder is **shown
+  in the tally on every render and named in all three numbers when Save is refused**, computed in
+  Go from `money` and never in a template (CO-1). The form's mode decides what is stored, so
+  `Edit.Splits` is always sent -- which is why `shownPlainly` decides what a transaction *opens*
+  in: the one box can hold one part for the whole amount under a name and nothing else, and a box
+  that cannot show a part is a box that would remove it on the next Save.
 - **Changing and removing a transaction are four routes**, all under `withWritableCheckbook`:
   `GET .../{txn}/edit` and `POST .../{txn}` for the change, `GET` and `POST .../{txn}/delete` for
   the removal, which asks first (RG-3). `transactionFor` is the shared front door — it resolves

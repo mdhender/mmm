@@ -392,14 +392,43 @@ a.danger { color: var(--negative); }
 button.danger { border-color: var(--negative); background: var(--negative); }
 button.danger:hover { background: var(--ink); border-color: var(--ink); }
 
-/* A box that is shown rather than offered: the category and the amount of a
-   transaction split among several categories, which this release cannot edit.
-   The note under the form says so in words, but a box that looks exactly like
-   its neighbours and refuses to take a keystroke says it the wrong way. */
-.entry-fields input:disabled,
-.entry-fields input:read-only {
-    background: var(--panel);
+/* The split editor: a line per part of a transaction, under the boxes that
+   describe the whole of it. It is a table because that is what it is -- three
+   columns and a total -- and because the tally in the foot has to line up under
+   the amounts it adds. */
+table.splits { width: 100%; max-width: 44rem; margin: 1rem 0 0; border-collapse: collapse; }
+table.splits caption {
+    text-align: left;
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
     color: var(--muted);
-    border-style: dashed;
-    cursor: not-allowed;
+    padding: 0 0 .3rem;
 }
+table.splits th {
+    text-align: left;
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--rule);
+    padding: .35rem .5rem;
+}
+table.splits td { padding: .25rem .5rem; border-bottom: 1px solid var(--rule); }
+table.splits input {
+    font: inherit;
+    width: 100%;
+    padding: .3rem .4rem;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink);
+}
+table.splits input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+table.splits input.money { text-align: right; }
+
+/* The tally. It carries no border above it because the last line already has
+   one, and Unassigned is the figure the reader is working towards, so it is the
+   one printed in the register's own ink rather than in the muted grey. */
+table.splits tfoot th { border-bottom: none; text-align: right; font-weight: normal; }
+table.splits tfoot td { border-bottom: none; padding: .15rem .9rem .15rem .5rem; color: var(--muted); }
+table.splits tfoot tr.unassigned th, table.splits tfoot tr.unassigned td { color: var(--ink); font-weight: 600; }

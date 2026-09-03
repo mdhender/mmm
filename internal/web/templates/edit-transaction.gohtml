@@ -6,16 +6,33 @@
         </p>
     </div>
 
-    {{- /* A plain form POST and a redirect, with no HTMX and no script. Changing
-           a date or an amount moves the running balance of every row below it,
-           so there is no part of the page to swap and a full re-render is the
-           honest answer. The POST redirects, which is what stops a reload
-           applying the same change twice. */ -}}
+    {{template "edit-form" .}}
+
+    <div class="page-actions">
+        <a href="/accounts/{{.Account.ID}}#txn-{{.ID}}">Back to the register</a>
+        <a class="danger" href="/accounts/{{.Account.ID}}/transactions/{{.ID}}/delete">Remove this transaction</a>
+    </div>
+{{end}}
+
+{{- /* The form is a template of its own so that Add a line can swap it where
+       htmx loaded and re-render the page where it did not. Everything the two
+       reshaping buttons change is inside it, the list of category names
+       included. */ -}}
+{{define "edit-form"}}
+    {{- /* A plain form POST and a redirect, with no HTMX and no script on Save.
+           Changing a date or an amount moves the running balance of every row
+           below it, so there is no part of the page to swap and a full
+           re-render is the honest answer. The POST redirects, which is what
+           stops a reload applying the same change twice. */ -}}
     <form class="entry" method="post" action="/accounts/{{.Account.ID}}/transactions/{{.ID}}">
         {{- /* The version this form was filled in against. A form left open
                while another window changed the same transaction is refused
                rather than applied over it (CO-3). */ -}}
         <input type="hidden" name="updated_at" value="{{.Token}}">
+        {{- /* The mode is a field on the form rather than state in the browser,
+               so it survives a page that comes back with a problem on it and
+               works with no script at all. */ -}}
+        {{if .Split}}<input type="hidden" name="split" value="1">{{end}}
 
         {{if .FormError}}
             {{- /* Says what happened and what to do next, like every other
@@ -34,16 +51,7 @@
             <label class="f-payee">Payee
                 <input type="text" name="payee" value="{{.Form.Payee}}" required>
             </label>
-            {{if .IsSplit}}
-                {{- /* This release has no split editor. The category and the
-                       amount are shown and not offered, because one box cannot
-                       hold what was divided among several categories and
-                       flattening it would be a quiet loss of what the household
-                       recorded. */ -}}
-                <label class="f-category">Category
-                    <input type="text" value="&mdash; Split &mdash;" disabled>
-                </label>
-            {{else}}
+            {{if not .Split}}
                 <label class="f-category">Category
                     <input type="text" name="category" value="{{.Form.Category}}"
                            list="category-names" autocomplete="off" placeholder="Uncategorized">
@@ -53,16 +61,19 @@
                 <input type="text" name="memo" value="{{.Form.Memo}}">
             </label>
             {{- /* Two boxes, as on the entry form. The box says which way the
-                   money went, so no sign is typed and none can be forgotten. */ -}}
+                   money went, so no sign is typed and none can be forgotten,
+                   and the lines below take their sign from it. */ -}}
             <label class="f-payment">Payment
                 <input type="text" name="payment" value="{{.Form.Payment}}"
-                       inputmode="decimal" class="money"{{if .IsSplit}} readonly{{end}}>
+                       inputmode="decimal" class="money">
             </label>
             <label class="f-deposit">Deposit
                 <input type="text" name="deposit" value="{{.Form.Deposit}}"
-                       inputmode="decimal" class="money"{{if .IsSplit}} readonly{{end}}>
+                       inputmode="decimal" class="money">
             </label>
             <div class="f-add">
+                {{- /* Save is the first button in the form, so it is the one a
+                       press of Enter in a box reaches. */ -}}
                 <button type="submit">Save</button>
             </div>
 
@@ -71,12 +82,68 @@
             </datalist>
         </div>
 
+        {{if .Split}}
+            <table class="splits">
+                <caption>Divided among</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Category</th>
+                        <th scope="col">Memo</th>
+                        <th scope="col" class="money">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Lines}}
+                        <tr>
+                            <td><input type="text" name="split_category" value="{{.Category}}"
+                                       list="category-names" autocomplete="off" placeholder="Unassigned"></td>
+                            <td><input type="text" name="split_memo" value="{{.Memo}}"></td>
+                            <td><input type="text" name="split_amount" value="{{.Amount}}"
+                                       inputmode="decimal" class="money"></td>
+                        </tr>
+                    {{end}}
+                </tbody>
+                {{- /* The gap is shown while it is being made rather than
+                       discovered on Save. Every figure is worked out in Go from
+                       the money package (CO-1) and re-worked on every render,
+                       which is what makes it feel live without anything
+                       calculating in the browser. */ -}}
+                <tfoot>
+                    <tr>
+                        <th scope="row" colspan="2">This transaction</th>
+                        <td class="money">{{.Tally.Amount}}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row" colspan="2">Assigned</th>
+                        <td class="money">{{.Tally.Assigned}}</td>
+                    </tr>
+                    <tr class="unassigned">
+                        <th scope="row" colspan="2">Unassigned</th>
+                        <td class="money">{{.Tally.Unassigned}}</td>
+                    </tr>
+                </tfoot>
+            </table>
+
+            {{- /* A real button that posts the form. htmx swaps the form alone
+                   where the script loaded; where it did not, the same press
+                   re-renders the page. Either way nothing is written. */ -}}
+            <button type="submit" class="cta-button" name="action" value="add-line"
+                    hx-post="/accounts/{{.Account.ID}}/transactions/{{.ID}}"
+                    hx-include="closest form" hx-target="closest form" hx-swap="outerHTML"
+                    hx-vals='{"action": "add-line"}'>Add a line</button>
+        {{else}}
+            <button type="submit" class="cta-button" name="action" value="split"
+                    hx-post="/accounts/{{.Account.ID}}/transactions/{{.ID}}"
+                    hx-include="closest form" hx-target="closest form" hx-swap="outerHTML"
+                    hx-vals='{"action": "split"}'>Split this transaction</button>
+        {{end}}
+
         <p class="muted entry-note">
-            {{if .IsSplit}}
-                This transaction is divided among {{.SplitCount}} categories. This release cannot
-                edit those parts, so the category and the amount are shown here rather than
-                offered; everything else can be changed. To change the amount, remove this
-                transaction and enter it again.
+            {{if .Split}}
+                Each line is typed without a sign and takes this transaction's direction. A line
+                with no category is a part you have not decided on yet; clear a line's amount to
+                take the line away, and clear them all to leave the transaction uncategorized.
+                The parts have to add up to the transaction before it can be saved.
             {{else}}
                 Amounts are in {{.Currency}}, without a sign. Whether the bank has shown this
                 transaction is marked in the register's status column, not here: that is a fact
@@ -84,9 +151,4 @@
             {{end}}
         </p>
     </form>
-
-    <div class="page-actions">
-        <a href="/accounts/{{.Account.ID}}#txn-{{.ID}}">Back to the register</a>
-        <a class="danger" href="/accounts/{{.Account.ID}}/transactions/{{.ID}}/delete">Remove this transaction</a>
-    </div>
 {{end}}
