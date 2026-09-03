@@ -5,6 +5,8 @@ package transaction_test
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -532,5 +534,530 @@ func TestSetStatusOtherAccount(t *testing.T) {
 
 	if _, err := transaction.SetStatus(ctx, store, other, txn.ID, transaction.Cleared, txn.UpdatedAt); !errors.Is(err, transaction.ErrNotFound) {
 		t.Fatalf("err = %v, want transaction.ErrNotFound", err)
+	}
+}
+
+// splitsOf reads a transaction's splits as (category id, decimal amount) pairs,
+// through SQL rather than through the package, so a test can tell what was
+// actually written from what the package says it wrote.
+func splitsOf(t *testing.T, store *storage.Store, txnID int64) [][2]string {
+	t.Helper()
+	conn, err := store.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	defer store.Put(conn)
+
+	var got [][2]string
+	if err := sqlitex.ExecuteTransient(conn, `
+SELECT COALESCE(category_id, 0), amount FROM splits WHERE transaction_id = ? ORDER BY id;`,
+		&sqlitex.ExecOptions{
+			Args: []any{txnID},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				amount, err := money.NewMinor(stmt.ColumnInt64(1), money.USD)
+				if err != nil {
+					return err
+				}
+				got = append(got, [2]string{strconv.FormatInt(stmt.ColumnInt64(0), 10), amount.Decimal()})
+				return nil
+			},
+		}); err != nil {
+		t.Fatalf("read splits: %v", err)
+	}
+	return got
+}
+
+// edited returns an Edit that would leave txn exactly as it is, so a test can
+// change one field and be sure it changed only that one.
+func edited(txn transaction.Transaction) transaction.Edit {
+	return transaction.Edit{
+		Date:        txn.Date,
+		Payee:       txn.Payee,
+		Memo:        txn.Memo,
+		Amount:      txn.Amount,
+		CheckNumber: txn.CheckNumber,
+	}
+}
+
+// TestUpdateChangesEveryField is RG-2's "change": everything typed on the entry
+// form can be typed again.
+func TestUpdateChangesEveryField(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "100.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smth", Memo: "grocerys",
+		Amount: usd(t, "-84.17"), CheckNumber: "101",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := transaction.Update(ctx, store, acct, txn.ID, transaction.Edit{
+		Date: "2026-08-15", Payee: "Riba Smith", Memo: "groceries",
+		Amount: usd(t, "-84.71"), CheckNumber: "102",
+	}, txn.UpdatedAt)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if got.Date != "2026-08-15" || got.Payee != "Riba Smith" || got.Memo != "groceries" ||
+		got.Amount.Decimal() != "-84.71" || got.CheckNumber != "102" {
+		t.Errorf("Update returned %+v", got)
+	}
+	if !got.UpdatedAt.After(txn.UpdatedAt) {
+		t.Errorf("updated_at did not advance: %s then %s", txn.UpdatedAt, got.UpdatedAt)
+	}
+	// Status is not an editable field: clearing is a separate fact (RC-3).
+	if got.Status != transaction.Uncleared {
+		t.Errorf("status = %q, want uncleared", got.Status)
+	}
+
+	// And the register agrees, which is what the household actually sees.
+	reg, err := transaction.LoadRegister(ctx, store, acct)
+	if err != nil {
+		t.Fatalf("LoadRegister: %v", err)
+	}
+	if reg.Entries[0].Payee != "Riba Smith" || reg.Ending.Decimal() != "15.29" {
+		t.Errorf("register shows %q at %s, want Riba Smith at 15.29",
+			reg.Entries[0].Payee, reg.Ending.Decimal())
+	}
+}
+
+// TestUpdateRefusesStaleToken is CO-3 on an edit: the second tab is told, and
+// the first tab's work stands.
+func TestUpdateRefusesStaleToken(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	stale := txn.UpdatedAt // what both tabs read
+
+	first := edited(txn)
+	first.Payee = "Riba Smith SA"
+	if _, err := transaction.Update(ctx, store, acct, txn.ID, first, stale); err != nil {
+		t.Fatalf("first Update: %v", err)
+	}
+
+	second := edited(txn)
+	second.Payee = "Super 99"
+	_, err = transaction.Update(ctx, store, acct, txn.ID, second, stale)
+	if !errors.Is(err, transaction.ErrConflict) {
+		t.Fatalf("second Update err = %v, want transaction.ErrConflict", err)
+	}
+
+	reg, err := transaction.LoadRegister(ctx, store, acct)
+	if err != nil {
+		t.Fatalf("LoadRegister: %v", err)
+	}
+	// Not a mixture of the two: the refused write left nothing behind.
+	if reg.Entries[0].Payee != "Riba Smith SA" {
+		t.Errorf("payee = %q, want Riba Smith SA", reg.Entries[0].Payee)
+	}
+}
+
+// TestUpdateReplacesSplits: the splits are the new set, not the new set added to
+// the old one.
+func TestUpdateReplacesSplits(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	groceries, err := category.Ensure(ctx, store, "Groceries")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	household, err := category.Ensure(ctx, store, "Household")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Costco", Amount: usd(t, "-150.00"),
+		Splits: []transaction.Split{{CategoryID: groceries.ID, Amount: usd(t, "-150.00")}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	e := edited(txn)
+	e.Splits = &[]transaction.Split{
+		{CategoryID: groceries.ID, Amount: usd(t, "-90.00")},
+		{CategoryID: household.ID, Amount: usd(t, "-60.00")},
+	}
+	got, err := transaction.Update(ctx, store, acct, txn.ID, e, txn.UpdatedAt)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	want := [][2]string{
+		{strconv.FormatInt(groceries.ID, 10), "-90.00"},
+		{strconv.FormatInt(household.ID, 10), "-60.00"},
+	}
+	if diff := splitsOf(t, store, txn.ID); !reflect.DeepEqual(diff, want) {
+		t.Errorf("splits = %v, want %v", diff, want)
+	}
+	if n := countRows(t, store, "splits"); n != 2 {
+		t.Errorf("splits table holds %d rows, want 2: the old ones were not removed", n)
+	}
+
+	// Edit again, back to one, so the replacement is not just an append that
+	// happened to look right the first time.
+	e2 := edited(got)
+	e2.Splits = &[]transaction.Split{{CategoryID: household.ID, Amount: usd(t, "-150.00")}}
+	if _, err := transaction.Update(ctx, store, acct, txn.ID, e2, got.UpdatedAt); err != nil {
+		t.Fatalf("second Update: %v", err)
+	}
+	if n := countRows(t, store, "splits"); n != 1 {
+		t.Errorf("splits table holds %d rows, want 1", n)
+	}
+}
+
+// TestUpdateRemovesSplits: an empty set is not a nil one. Clearing the category
+// leaves an uncategorized transaction, which is a normal state.
+func TestUpdateRemovesSplits(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	cat, err := category.Ensure(ctx, store, "Groceries")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+		Splits: []transaction.Split{{CategoryID: cat.ID, Amount: usd(t, "-84.17")}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	e := edited(txn)
+	e.Splits = &[]transaction.Split{}
+	if _, err := transaction.Update(ctx, store, acct, txn.ID, e, txn.UpdatedAt); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if n := countRows(t, store, "splits"); n != 0 {
+		t.Errorf("splits table holds %d rows, want 0", n)
+	}
+	reg, err := transaction.LoadRegister(ctx, store, acct)
+	if err != nil {
+		t.Fatalf("LoadRegister: %v", err)
+	}
+	if reg.Entries[0].Category != "" || reg.Entries[0].SplitCount != 0 {
+		t.Errorf("entry is %q with %d splits, want uncategorized",
+			reg.Entries[0].Category, reg.Entries[0].SplitCount)
+	}
+}
+
+// TestUpdateKeepsSplitsWhenNotGiven: a caller that does not understand a
+// transaction's categories can still change its payee without flattening them.
+func TestUpdateKeepsSplitsWhenNotGiven(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	groceries, err := category.Ensure(ctx, store, "Groceries")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	household, err := category.Ensure(ctx, store, "Household")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Costcp", Amount: usd(t, "-150.00"),
+		Splits: []transaction.Split{
+			{CategoryID: groceries.ID, Amount: usd(t, "-90.00")},
+			{CategoryID: household.ID, Amount: usd(t, "-60.00")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	e := edited(txn) // Splits nil: leave them alone
+	e.Payee = "Costco"
+	if _, err := transaction.Update(ctx, store, acct, txn.ID, e, txn.UpdatedAt); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	want := [][2]string{
+		{strconv.FormatInt(groceries.ID, 10), "-90.00"},
+		{strconv.FormatInt(household.ID, 10), "-60.00"},
+	}
+	if got := splitsOf(t, store, txn.ID); !reflect.DeepEqual(got, want) {
+		t.Errorf("splits = %v, want %v: leaving them alone rewrote them", got, want)
+	}
+}
+
+// TestUpdateRefusesUnbalancedSplits, both ways round: a new set that does not
+// total, and a new amount that no longer matches the set left in place. Neither
+// writes anything.
+func TestUpdateRefusesUnbalancedSplits(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	cat, err := category.Ensure(ctx, store, "Groceries")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+		Splits: []transaction.Split{{CategoryID: cat.ID, Amount: usd(t, "-84.17")}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	t.Run("a set that does not total", func(t *testing.T) {
+		e := edited(txn)
+		e.Splits = &[]transaction.Split{{CategoryID: cat.ID, Amount: usd(t, "-80.00")}}
+		if _, err := transaction.Update(ctx, store, acct, txn.ID, e, txn.UpdatedAt); !errors.Is(err, transaction.ErrSplitTotal) {
+			t.Fatalf("Update err = %v, want transaction.ErrSplitTotal", err)
+		}
+	})
+
+	t.Run("an amount the stored set no longer matches", func(t *testing.T) {
+		e := edited(txn) // Splits nil
+		e.Amount = usd(t, "-90.00")
+		if _, err := transaction.Update(ctx, store, acct, txn.ID, e, txn.UpdatedAt); !errors.Is(err, transaction.ErrSplitTotal) {
+			t.Fatalf("Update err = %v, want transaction.ErrSplitTotal", err)
+		}
+	})
+
+	// Nothing was written by either, which is what the single immediate
+	// transaction buys: the parent row is not corrected while the splits are not.
+	reg, err := transaction.LoadRegister(ctx, store, acct)
+	if err != nil {
+		t.Fatalf("LoadRegister: %v", err)
+	}
+	if reg.Entries[0].Amount.Decimal() != "-84.17" {
+		t.Errorf("amount = %s, want -84.17", reg.Entries[0].Amount.Decimal())
+	}
+	if got := splitsOf(t, store, txn.ID); len(got) != 1 || got[0][1] != "-84.17" {
+		t.Errorf("splits = %v, want the original one", got)
+	}
+}
+
+// TestUpdateUnchangedKeepsToken: saving a form nobody changed is not a change,
+// and must not make every other tab on this register stale.
+func TestUpdateUnchangedKeepsToken(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	cat, err := category.Ensure(ctx, store, "Groceries")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+		Splits: []transaction.Split{{CategoryID: cat.ID, Amount: usd(t, "-84.17")}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	e := edited(txn)
+	e.Splits = &[]transaction.Split{{CategoryID: cat.ID, Amount: usd(t, "-84.17")}}
+	got, err := transaction.Update(ctx, store, acct, txn.ID, e, txn.UpdatedAt)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if !got.UpdatedAt.Equal(txn.UpdatedAt) {
+		t.Errorf("updated_at moved from %s to %s for an edit that changed nothing",
+			txn.UpdatedAt, got.UpdatedAt)
+	}
+}
+
+// TestUpdateRefusesReconciled: RC-3 on every field, not only on the status.
+func TestUpdateRefusesReconciled(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+		Status: transaction.Reconciled,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	e := edited(txn)
+	e.Memo = "a note that changes no balance"
+	if _, err := transaction.Update(ctx, store, acct, txn.ID, e, txn.UpdatedAt); !errors.Is(err, transaction.ErrReconciled) {
+		t.Fatalf("Update err = %v, want transaction.ErrReconciled", err)
+	}
+	if err := transaction.Delete(ctx, store, acct, txn.ID, txn.UpdatedAt); !errors.Is(err, transaction.ErrReconciled) {
+		t.Fatalf("Delete err = %v, want transaction.ErrReconciled", err)
+	}
+	if n := countRows(t, store, "transactions"); n != 1 {
+		t.Errorf("transactions table holds %d rows, want 1", n)
+	}
+}
+
+// TestUpdateRejects covers the checks made before anything is read.
+func TestUpdateRejects(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	eur, err := money.ParseDecimal("-84.17", money.EUR)
+	if err != nil {
+		t.Fatalf("ParseDecimal: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		edit func(transaction.Edit) transaction.Edit
+		want error
+	}{
+		{"not a date", func(e transaction.Edit) transaction.Edit { e.Date = "2026-02-30"; return e }, transaction.ErrInvalidDate},
+		{"not a date at all", func(e transaction.Edit) transaction.Edit { e.Date = "last Tuesday"; return e }, transaction.ErrInvalidDate},
+		{"another currency", func(e transaction.Edit) transaction.Edit { e.Amount = eur; return e }, money.ErrCurrencyMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := transaction.Update(ctx, store, acct, txn.ID, tc.edit(edited(txn)), txn.UpdatedAt); !errors.Is(err, tc.want) {
+				t.Fatalf("Update err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateOtherAccount: the id comes from a URL, and a URL can be edited. One
+// account's transaction is not reachable through another's register.
+func TestUpdateOtherAccount(t *testing.T) {
+	ctx := t.Context()
+	store, checkingAcct := checking(t, "0.00")
+
+	savings, err := account.Create(ctx, store, account.New{
+		Name: "Savings", Type: account.Savings, Currency: money.USD, OpeningBalance: usd(t, "0.00"),
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	txn, err := transaction.Create(ctx, store, checkingAcct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	e := edited(txn)
+	e.Payee = "somebody else's register"
+	if _, err := transaction.Update(ctx, store, savings, txn.ID, e, txn.UpdatedAt); !errors.Is(err, transaction.ErrNotFound) {
+		t.Fatalf("Update err = %v, want transaction.ErrNotFound", err)
+	}
+	if err := transaction.Delete(ctx, store, savings, txn.ID, txn.UpdatedAt); !errors.Is(err, transaction.ErrNotFound) {
+		t.Fatalf("Delete err = %v, want transaction.ErrNotFound", err)
+	}
+}
+
+// TestDeleteRemovesTransactionAndSplits is RG-2's "remove", and the cascade that
+// goes with it. The splits go because foreign_keys is on, not because a second
+// statement remembered them.
+func TestDeleteRemovesTransactionAndSplits(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "100.00")
+
+	cat, err := category.Ensure(ctx, store, "Groceries")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+		Splits: []transaction.Split{
+			{CategoryID: cat.ID, Amount: usd(t, "-40.00")},
+			{CategoryID: cat.ID, Amount: usd(t, "-44.17")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	keep, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-15", Payee: "Felipe Motta", Amount: usd(t, "-10.00"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := transaction.Delete(ctx, store, acct, txn.ID, txn.UpdatedAt); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if n := countRows(t, store, "splits"); n != 0 {
+		t.Errorf("splits table holds %d rows, want 0: the cascade did not run", n)
+	}
+	reg, err := transaction.LoadRegister(ctx, store, acct)
+	if err != nil {
+		t.Fatalf("LoadRegister: %v", err)
+	}
+	if len(reg.Entries) != 1 || reg.Entries[0].ID != keep.ID {
+		t.Fatalf("register holds %d entries, want only the one that was kept", len(reg.Entries))
+	}
+	// The balance is the point: a removed transaction leaves the running total.
+	if reg.Ending.Decimal() != "90.00" {
+		t.Errorf("ending balance = %s, want 90.00", reg.Ending.Decimal())
+	}
+	if reg.Entries[0].Balance.Decimal() != "90.00" {
+		t.Errorf("running balance = %s, want 90.00", reg.Entries[0].Balance.Decimal())
+	}
+}
+
+// TestDeleteRefusesStaleToken: removing is a write, and a write from a tab that
+// has gone stale is refused like any other (CO-3).
+func TestDeleteRefusesStaleToken(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	stale := txn.UpdatedAt
+
+	if _, err := transaction.SetStatus(ctx, store, acct, txn.ID, transaction.Cleared, stale); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+
+	if err := transaction.Delete(ctx, store, acct, txn.ID, stale); !errors.Is(err, transaction.ErrConflict) {
+		t.Fatalf("Delete err = %v, want transaction.ErrConflict", err)
+	}
+	if n := countRows(t, store, "transactions"); n != 1 {
+		t.Errorf("transactions table holds %d rows, want 1: the refused delete ran anyway", n)
+	}
+}
+
+// TestDeleteMissing: an id that never existed, or one already removed.
+func TestDeleteMissing(t *testing.T) {
+	ctx := t.Context()
+	store, acct := checking(t, "0.00")
+
+	txn, err := transaction.Create(ctx, store, acct, transaction.New{
+		Date: "2026-08-14", Payee: "Riba Smith", Amount: usd(t, "-84.17"),
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := transaction.Delete(ctx, store, acct, txn.ID, txn.UpdatedAt); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	// Twice. Ids are never reused (ST-9), so the second press cannot land on
+	// somebody else's transaction; it lands on nothing.
+	if err := transaction.Delete(ctx, store, acct, txn.ID, txn.UpdatedAt); !errors.Is(err, transaction.ErrNotFound) {
+		t.Fatalf("second Delete err = %v, want transaction.ErrNotFound", err)
 	}
 }

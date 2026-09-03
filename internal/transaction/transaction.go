@@ -528,3 +528,313 @@ func scanTransaction(stmt *sqlite.Stmt, cur money.Currency) (Transaction, error)
 	}
 	return t, nil
 }
+
+// Edit describes the change to make to a transaction.
+//
+// Status is deliberately absent. Clearing a transaction is a separate fact about
+// the bank rather than a correction to what was entered, and SetStatus owns it
+// (RC-3). An edit that also silently marked a row cleared would be two writes
+// wearing one button.
+type Edit struct {
+	Date        string
+	Payee       string
+	Memo        string
+	Amount      money.Money
+	CheckNumber string
+
+	// Splits replaces the transaction's splits. Nil leaves them exactly as they
+	// are, which is not the same as an empty slice: the empty slice removes
+	// every split and leaves the transaction uncategorized.
+	//
+	// The distinction is what lets a caller that does not understand a
+	// transaction's categories -- the register's edit form, faced with a
+	// transaction split three ways -- change the payee without flattening them.
+	// Leaving them alone does not exempt them from the invariant: a new amount
+	// still has to match the splits already stored, so changing the amount of a
+	// split transaction is refused with ErrSplitTotal rather than quietly
+	// breaking it.
+	Splits *[]Split
+}
+
+// Update changes a transaction against the concurrency token it was read with.
+//
+// seen is the UpdatedAt the caller read, and the rules are SetStatus's: a token
+// that has moved on is ErrConflict, and a reconciled transaction is ErrReconciled
+// on every field, because a finished reconciliation records a fact the register
+// does not rewrite (RC-3). Nothing is written in either case.
+//
+// The parent row and the splits are changed inside one immediate transaction, so
+// an edit that would leave the splits disagreeing with the amount leaves the
+// stored transaction untouched instead of half-corrected.
+func Update(ctx context.Context, store *storage.Store, acct account.Account, id int64, e Edit, seen time.Time) (txn Transaction, err error) {
+	if _, err := time.Parse(DateLayout, e.Date); err != nil {
+		return Transaction{}, fmt.Errorf("%q: %w", e.Date, ErrInvalidDate)
+	}
+	if e.Amount.Currency() != acct.Currency {
+		return Transaction{}, fmt.Errorf("amount is %s, account %q is %s: %w",
+			e.Amount.Currency(), acct.Name, acct.Currency, money.ErrCurrencyMismatch)
+	}
+
+	conn, err := store.Conn(ctx)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("update transaction: %w", err)
+	}
+	defer store.Put(conn)
+
+	// One immediate transaction over the read and both writes, for SetStatus's
+	// reason: the token must not be able to move between being checked and being
+	// acted on, and the splits must not be replaced against a row somebody else
+	// has since changed.
+	endTx, err := sqlitex.ImmediateTransaction(conn)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("update transaction: %w", err)
+	}
+	defer endTx(&err)
+
+	current, err := get(conn, acct, id)
+	if err != nil {
+		return Transaction{}, err
+	}
+	if current.Status == Reconciled {
+		return Transaction{}, fmt.Errorf("transaction %d: %w", id, ErrReconciled)
+	}
+	if !current.UpdatedAt.Equal(seen.UTC().Truncate(time.Microsecond)) {
+		return Transaction{}, fmt.Errorf("transaction %d: %w", id, ErrConflict)
+	}
+
+	stored, err := loadSplits(conn, acct, id)
+	if err != nil {
+		return Transaction{}, err
+	}
+	// A nil Splits means the stored set is the set: the invariant is then checked
+	// against it, and the comparison below finds nothing to replace.
+	wanted := stored
+	if e.Splits != nil {
+		wanted = *e.Splits
+	}
+	if err := checkSplitTotal(e.Amount, wanted); err != nil {
+		return Transaction{}, err
+	}
+
+	if unchangedTransaction(current, e) && sameSplits(stored, wanted) {
+		// Nothing to write. Saying so by doing nothing is not laziness: a write
+		// here would move the token and make every other tab on this register
+		// stale in exchange for no change at all.
+		return current, nil
+	}
+
+	stmt, err := conn.Prepare(`
+UPDATE transactions
+   SET date = $date, payee = $payee, memo = $memo, amount = $amount,
+       check_number = $check_number, updated_at = $updated_at
+ WHERE id = $id AND updated_at = $seen
+RETURNING id, account_id, date, payee, memo, amount, status, check_number,
+          created_at, updated_at;`)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("update transaction: %w", err)
+	}
+	stmt.SetText("$date", e.Date)
+	stmt.SetText("$payee", e.Payee)
+	stmt.SetText("$memo", e.Memo)
+	storage.BindMoney(stmt, "$amount", e.Amount)
+	stmt.SetText("$check_number", e.CheckNumber)
+	storage.BindTime(stmt, "$updated_at", storage.NextUpdatedAt(current.UpdatedAt, time.Now()))
+	stmt.SetInt64("$id", id)
+	storage.BindTime(stmt, "$seen", current.UpdatedAt)
+
+	hasRow, err := stmt.Step()
+	if err != nil {
+		_ = stmt.Reset()
+		return Transaction{}, fmt.Errorf("update transaction: %w", err)
+	}
+	if !hasRow {
+		// Unreachable inside an immediate transaction, and checked anyway: the
+		// alternative to noticing is overwriting.
+		_ = stmt.Reset()
+		return Transaction{}, fmt.Errorf("transaction %d: %w", id, ErrConflict)
+	}
+	txn, err = scanTransaction(stmt, acct.Currency)
+	if resetErr := stmt.Reset(); err == nil {
+		err = resetErr
+	}
+	if err != nil {
+		return Transaction{}, fmt.Errorf("update transaction: %w", err)
+	}
+
+	if !sameSplits(stored, wanted) {
+		if err := replaceSplits(conn, id, wanted); err != nil {
+			return Transaction{}, err
+		}
+	}
+	return txn, nil
+}
+
+// Delete removes a transaction and its splits.
+//
+// seen is the token, and the write is refused on a stale one exactly as an edit
+// is: a tab that has been open since before somebody else changed a transaction
+// is not looking at the transaction it is asking to remove (CO-3). A reconciled
+// transaction is refused outright (RC-3).
+//
+// The splits go with the parent by ON DELETE CASCADE, which is real only because
+// storage sets foreign_keys = ON on every connection. There is no tombstone and
+// no reversing entry: a deleted transaction leaves the register and the balance,
+// and a deletion regretted later is what the backups are for (BK-1).
+func Delete(ctx context.Context, store *storage.Store, acct account.Account, id int64, seen time.Time) (err error) {
+	conn, err := store.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("delete transaction: %w", err)
+	}
+	defer store.Put(conn)
+
+	endTx, err := sqlitex.ImmediateTransaction(conn)
+	if err != nil {
+		return fmt.Errorf("delete transaction: %w", err)
+	}
+	defer endTx(&err)
+
+	current, err := get(conn, acct, id)
+	if err != nil {
+		return err
+	}
+	if current.Status == Reconciled {
+		return fmt.Errorf("transaction %d: %w", id, ErrReconciled)
+	}
+	if !current.UpdatedAt.Equal(seen.UTC().Truncate(time.Microsecond)) {
+		return fmt.Errorf("transaction %d: %w", id, ErrConflict)
+	}
+
+	stmt, err := conn.Prepare(`
+DELETE FROM transactions WHERE id = $id AND account_id = $account_id AND updated_at = $seen;`)
+	if err != nil {
+		return fmt.Errorf("delete transaction: %w", err)
+	}
+	stmt.SetInt64("$id", id)
+	stmt.SetInt64("$account_id", acct.ID)
+	storage.BindTime(stmt, "$seen", current.UpdatedAt)
+
+	_, err = stmt.Step()
+	if resetErr := stmt.Reset(); err == nil {
+		err = resetErr
+	}
+	if err != nil {
+		return fmt.Errorf("delete transaction: %w", err)
+	}
+	if conn.Changes() == 0 {
+		// The row was read a few statements ago inside this transaction, so this
+		// cannot happen. It is checked because a delete that matched nothing and
+		// reported success would be the quietest possible lie.
+		return fmt.Errorf("transaction %d: %w", id, ErrConflict)
+	}
+	return nil
+}
+
+// unchangedTransaction reports whether e would leave the stored row as it is.
+func unchangedTransaction(current Transaction, e Edit) bool {
+	return current.Date == e.Date &&
+		current.Payee == e.Payee &&
+		current.Memo == e.Memo &&
+		current.CheckNumber == e.CheckNumber &&
+		current.Amount.Currency() == e.Amount.Currency() &&
+		current.Amount.Amount() == e.Amount.Amount()
+}
+
+// sameSplits reports whether two split sets are the same, in order.
+//
+// Order counts because the register shows the first split's category on a row
+// that has only one, and because reordering is a change the household made and
+// should see kept.
+func sameSplits(a, b []Split) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].CategoryID != b[i].CategoryID ||
+			a[i].Memo != b[i].Memo ||
+			a[i].Amount.Currency() != b[i].Amount.Currency() ||
+			a[i].Amount.Amount() != b[i].Amount.Amount() {
+			return false
+		}
+	}
+	return true
+}
+
+// loadSplits reads a transaction's splits in id order on an open connection.
+func loadSplits(conn *sqlite.Conn, acct account.Account, txnID int64) ([]Split, error) {
+	stmt, err := conn.Prepare(`
+SELECT COALESCE(category_id, 0) AS category_id, amount, memo
+  FROM splits WHERE transaction_id = $transaction_id ORDER BY id;`)
+	if err != nil {
+		return nil, fmt.Errorf("read splits: %w", err)
+	}
+	stmt.SetInt64("$transaction_id", txnID)
+	defer stmt.Reset()
+
+	var splits []Split
+	for {
+		hasRow, err := stmt.Step()
+		if err != nil {
+			return nil, fmt.Errorf("read splits: %w", err)
+		}
+		if !hasRow {
+			return splits, nil
+		}
+		amount, err := storage.ColumnMoney(stmt, "amount", acct.Currency)
+		if err != nil {
+			return nil, fmt.Errorf("read splits: %w", err)
+		}
+		splits = append(splits, Split{
+			CategoryID: stmt.GetInt64("category_id"),
+			Amount:     amount,
+			Memo:       stmt.GetText("memo"),
+		})
+	}
+}
+
+// replaceSplits writes a transaction's splits, discarding whatever was there.
+//
+// The old rows are deleted and the new ones inserted rather than matched up and
+// patched. Split ids are held by nothing -- no reconciliation, no export, no
+// import -- so there is nothing for a diff to preserve, and a diff would be a
+// second description of the same set to keep correct. ST-9 forbids reusing an
+// id, not spending one.
+func replaceSplits(conn *sqlite.Conn, txnID int64, splits []Split) error {
+	del, err := conn.Prepare(`DELETE FROM splits WHERE transaction_id = $transaction_id;`)
+	if err != nil {
+		return fmt.Errorf("replace splits: %w", err)
+	}
+	del.SetInt64("$transaction_id", txnID)
+	_, err = del.Step()
+	if resetErr := del.Reset(); err == nil {
+		err = resetErr
+	}
+	if err != nil {
+		return fmt.Errorf("replace splits: %w", err)
+	}
+
+	for i, s := range splits {
+		stmt, err := conn.Prepare(`
+INSERT INTO splits (transaction_id, category_id, amount, memo)
+VALUES ($transaction_id, $category_id, $amount, $memo);`)
+		if err != nil {
+			return fmt.Errorf("replace splits: split %d: %w", i+1, err)
+		}
+		stmt.SetInt64("$transaction_id", txnID)
+		if s.CategoryID == 0 {
+			stmt.SetNull("$category_id")
+		} else {
+			stmt.SetInt64("$category_id", s.CategoryID)
+		}
+		storage.BindMoney(stmt, "$amount", s.Amount)
+		stmt.SetText("$memo", s.Memo)
+
+		_, err = stmt.Step()
+		if resetErr := stmt.Reset(); err == nil {
+			err = resetErr
+		}
+		if err != nil {
+			return fmt.Errorf("replace splits: split %d: %w", i+1, err)
+		}
+	}
+	return nil
+}
