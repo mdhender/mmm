@@ -524,9 +524,19 @@ HTML. No SQL and no balance arithmetic belong here.
   creating an account, and changing or removing a transaction are still plain POSTs and redirects
   — a new row changes the running balance of every row below it, an edit moves every balance below
   it, a removal moves the totals besides, and a new account changes the list beside every page, so
-  in none of those cases is there a fragment to swap. The split editor's **Add a line** and
-  **Split this transaction** are the second htmx interaction: they write nothing and re-render
-  only the form, which `edit-transaction.gohtml` defines as `edit-form` for exactly that reason.
+  in none of those cases is there a fragment to swap. The split editor is the second htmx
+  interaction: **Add a line** and **Split this transaction** write nothing and re-render only the
+  form (`edit-form`), and a **changed box re-adds the parts and swaps the tally alone**
+  (`split-tally`), which is what leaves every box and the caret where they were.
+- **The tally's arithmetic stays on the server, and that is the whole reason it is htmx and not a
+  script.** Adding 71.22 and 12.95 in a browser is IEEE-754 and gives 84.17000000000002, which CO-1
+  forbids; doing it exactly would mean a second `internal/money` in another language, and the two
+  would disagree first in the figure the household is reading while it decides. The round trip is
+  loopback to a local file, so there is nothing to buy by moving it. The form's trigger is
+  **`change`, not `submit`** -- Save stays a plain post and a redirect, and a `change` fires on
+  blur with no timer in the path, so a backgrounded tab (where Chrome clamps timers to about a
+  second) does not stall it. A debounced `keyup ... delay:` trigger would have that problem; this
+  is why it does not have one. Verified in a hidden tab, not only a focused one.
 - **Every htmx control is a real form that works without it.** The handler answers a fragment when
   `HX-Request` is set and a redirect otherwise, so the register keeps working if the script never
   loads. Keep it that way rather than putting `hx-` attributes on a bare element.

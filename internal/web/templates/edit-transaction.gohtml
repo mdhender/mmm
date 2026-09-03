@@ -24,7 +24,21 @@
            below it, so there is no part of the page to swap and a full
            re-render is the honest answer. The POST redirects, which is what
            stops a reload applying the same change twice. */ -}}
-    <form class="entry" method="post" action="/accounts/{{.Account.ID}}/transactions/{{.ID}}">
+    {{- /* In split mode the form asks the server to re-add the parts whenever a
+           box changes -- which fires on blur, so tabbing out of an amount is
+           what refreshes the tally. The trigger is `change`, not `submit`, so
+           Save is left alone and still posts and redirects normally.
+
+           The arithmetic stays on the server. Adding 71.22 and 12.95 in the
+           browser is IEEE-754 and gives 84.17000000000002, which is what CO-1
+           forbids, and doing it exactly would mean a second money
+           implementation in another language for the two to disagree over. The
+           round trip is loopback to a local file, so there is nothing to buy by
+           moving it. */ -}}
+    <form class="entry" method="post" action="/accounts/{{.Account.ID}}/transactions/{{.ID}}"
+          {{- if .Split}} hx-post="/accounts/{{.Account.ID}}/transactions/{{.ID}}"
+          hx-trigger="change" hx-target="#split-tally" hx-swap="outerHTML"
+          hx-sync="this:replace" hx-vals='{"action": "tally"}'{{end}}>
         {{- /* The version this form was filled in against. A form left open
                while another window changed the same transaction is refused
                rather than applied over it (CO-3). */ -}}
@@ -103,25 +117,7 @@
                         </tr>
                     {{end}}
                 </tbody>
-                {{- /* The gap is shown while it is being made rather than
-                       discovered on Save. Every figure is worked out in Go from
-                       the money package (CO-1) and re-worked on every render,
-                       which is what makes it feel live without anything
-                       calculating in the browser. */ -}}
-                <tfoot>
-                    <tr>
-                        <th scope="row" colspan="2">This transaction</th>
-                        <td class="money">{{.Tally.Amount}}</td>
-                    </tr>
-                    <tr>
-                        <th scope="row" colspan="2">Assigned</th>
-                        <td class="money">{{.Tally.Assigned}}</td>
-                    </tr>
-                    <tr class="unassigned">
-                        <th scope="row" colspan="2">Unassigned</th>
-                        <td class="money">{{.Tally.Unassigned}}</td>
-                    </tr>
-                </tfoot>
+                {{template "split-tally" .}}
             </table>
 
             {{- /* A real button that posts the form. htmx swaps the form alone
@@ -153,4 +149,25 @@
             {{end}}
         </p>
     </form>
+{{end}}
+
+{{- /* The gap is shown while it is being made rather than discovered on Save.
+       Every figure is worked out in Go from the money package (CO-1); this is
+       the only part of the form a changed box replaces, so the boxes keep their
+       values and the caret keeps its place. */ -}}
+{{define "split-tally"}}
+    <tfoot id="split-tally">
+        <tr>
+            <th scope="row" colspan="2">This transaction</th>
+            <td class="money">{{.Tally.Amount}}</td>
+        </tr>
+        <tr>
+            <th scope="row" colspan="2">Assigned</th>
+            <td class="money">{{.Tally.Assigned}}</td>
+        </tr>
+        <tr class="unassigned">
+            <th scope="row" colspan="2">Unassigned</th>
+            <td class="money">{{.Tally.Unassigned}}</td>
+        </tr>
+    </tfoot>
 {{end}}

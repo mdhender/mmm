@@ -530,6 +530,108 @@ func TestAddALineAnswersWithTheFormAndWritesNothing(t *testing.T) {
 	}
 }
 
+// TestAChangedBoxRefreshesTheTallyAlone is the reactivity, and its whole point
+// is what it does *not* send back: the boxes are not re-rendered, so a reader
+// who tabbed out of an amount keeps every other value and the caret where it
+// was.
+//
+// The figures are worked out on the server on purpose. Adding 71.22 and 12.95
+// in the browser is IEEE-754 and gives 84.17000000000002, which CO-1 forbids,
+// and doing it exactly would mean a second money implementation for the two to
+// disagree over.
+func TestAChangedBoxRefreshesTheTallyAlone(t *testing.T) {
+	store := open(t)
+	acct := seed(t, store)
+	h := server(t, store)
+
+	before := token(t, store, acct, 2)
+
+	// The reader lowered the second line from 12.95 to 10.00 and tabbed away.
+	form := splitValues(t, store, acct, 2, "84.17",
+		splitLine{"Groceries", "", "71.22"},
+		splitLine{"Household", "", "10.00"})
+	form.Set("action", "tally")
+
+	w := hxPost(t, h, "/accounts/1/transactions/2", form)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200\n%s", w.Code, w.Body.String())
+	}
+
+	body := strings.TrimSpace(w.Body.String())
+	if !strings.HasPrefix(body, `<tfoot id="split-tally"`) {
+		t.Fatalf("the answer is not the tally the trigger targets:\n%s", body)
+	}
+	// Exact to the cent, and no float ever went near it.
+	for _, want := range []string{"84.17", "81.22", "2.95"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the tally does not show %q:\n%s", want, body)
+		}
+	}
+	// Not the boxes. Sending those back would move the caret and undo whatever
+	// was typed into a neighbouring field since the change fired.
+	for _, unwanted := range []string{"<form", `name="split_amount"`, `name="payee"`, "Add a line"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("the answer carries %q, which would be swapped over the reader's typing", unwanted)
+		}
+	}
+
+	// And nothing was written: not the amount, not the parts, not the token.
+	if got := token(t, store, acct, 2); got != before {
+		t.Error("re-adding the parts moved the transaction's version")
+	}
+	checkSplits(t, store, acct, 2, []transaction.SplitDetail{
+		{Split: transaction.Split{Amount: usd(t, "-71.22")}, Category: "Groceries"},
+		{Split: transaction.Split{Amount: usd(t, "-12.95")}, Category: "Household"},
+	})
+}
+
+// TestTheTallyTriggerIsOnlyOnTheEditor: the plain form has no tally to refresh,
+// so it carries no trigger and Save is the only thing that posts from it.
+func TestTheTallyTriggerIsOnlyOnTheEditor(t *testing.T) {
+	store := open(t)
+	seed(t, store)
+	h := server(t, store)
+
+	split := get(t, h, "/accounts/1/transactions/2/edit").Body.String()
+	for _, want := range []string{`hx-trigger="change"`, `hx-target="#split-tally"`, `<tfoot id="split-tally"`} {
+		if !strings.Contains(split, want) {
+			t.Errorf("the split editor is missing %q", want)
+		}
+	}
+	// The trigger is change, not submit: Save has to stay a plain post and a
+	// redirect, or it would be swapped into the tally.
+	if strings.Contains(split, `hx-trigger="submit"`) {
+		t.Error("the form's submit is handled by htmx, which would swap the register into the tally")
+	}
+
+	plain := get(t, h, "/accounts/1/transactions/3/edit").Body.String()
+	if strings.Contains(plain, "hx-trigger") || strings.Contains(plain, "split-tally") {
+		t.Error("the plain form carries a trigger for a tally it does not have")
+	}
+}
+
+// TestATallyWithoutTheScriptAnswersWithThePage. The trigger only exists where
+// htmx loaded, so this is a request that should not arrive -- and if it does, it
+// is answered with the whole page and still writes nothing.
+func TestATallyWithoutTheScriptAnswersWithThePage(t *testing.T) {
+	store := open(t)
+	acct := seed(t, store)
+
+	form := splitValues(t, store, acct, 2, "84.17", splitLine{"Groceries", "", "71.22"})
+	form.Set("action", "tally")
+
+	w := post(t, server(t, store), "/accounts/1/transactions/2", form)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "<html") {
+		t.Error("a plain request was answered with a fragment")
+	}
+	if got := entryOf(t, store, acct, 2); got.SplitCount != 2 {
+		t.Errorf("a tally wrote %d parts", got.SplitCount)
+	}
+}
+
 // TestSplitThisTransactionOpensTheEditor: the plain form's button, which writes
 // nothing either and brings the category already typed onto the first line.
 func TestSplitThisTransactionOpensTheEditor(t *testing.T) {

@@ -28,6 +28,17 @@ import (
 const (
 	actionSplit   = "split"
 	actionAddLine = "add-line"
+
+	// actionTally re-adds the parts and answers with the tally alone. It is what
+	// a changed box asks for, and like the other two it writes nothing.
+	actionTally = "tally"
+)
+
+// The fragments a reshaping press is answered with, named as the templates that
+// render them.
+const (
+	editFormFragment   = "edit-form"
+	splitTallyFragment = "split-tally"
 )
 
 // splitLine is one line of the split editor as it was typed.
@@ -194,10 +205,12 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request,
 		Token: storage.FormatTime(seen),
 	}
 
-	// The reshaping buttons take the form as typed, whatever state it is in: the
-	// reader is still filling it in, and refusing to add a line because the date
-	// is half typed would be answering a question they did not ask.
-	if action := r.PostForm.Get("action"); action == actionSplit || action == actionAddLine {
+	// The three presses that only reshape the form take it as typed, whatever
+	// state it is in: the reader is still filling it in, and refusing to add a
+	// line because the date is half typed would be answering a question they did
+	// not ask.
+	switch action := r.PostForm.Get("action"); action {
+	case actionSplit, actionAddLine:
 		_, st.Form, _ = parseEntryForm(r.PostForm, acct, "Save")
 		if action == actionSplit {
 			st.Lines = seedLines(st.Form, detail)
@@ -205,7 +218,14 @@ func (s *Server) handleUpdateTransaction(w http.ResponseWriter, r *http.Request,
 			st.Lines = append(st.Lines, splitLine{})
 		}
 		st.Split = true
-		s.reshapeEditForm(w, r, cb, accounts, acct, detail, st)
+		s.reshapeEditForm(w, r, cb, accounts, acct, detail, st, editFormFragment)
+		return
+
+	case actionTally:
+		// A box changed. The mode is left exactly as it was posted: this is not
+		// a press that decides anything, only one that re-adds what is typed.
+		_, st.Form, _ = parseEntryForm(r.PostForm, acct, "Save")
+		s.reshapeEditForm(w, r, cb, accounts, acct, detail, st, splitTallyFragment)
 		return
 	}
 
@@ -502,13 +522,16 @@ func (s *Server) updateFailed(w http.ResponseWriter, r *http.Request, cb *checkb
 	}
 }
 
-// reshapeEditForm answers Split this transaction and Add a line.
+// reshapeEditForm answers the presses that rearrange the form rather than write
+// to the checkbook: Split this transaction, Add a line, and a changed box.
 //
-// Nothing is written: the form comes back in the other mode, or with one more
-// blank line on it. htmx swaps the form alone where the script loaded; where it
-// did not, the same POST re-renders the page, which is how every other control
-// here works.
-func (s *Server) reshapeEditForm(w http.ResponseWriter, r *http.Request, cb *checkbook, accounts []account.Account, acct account.Account, detail transaction.Detail, st editState) {
+// Nothing is written by any of them. htmx swaps the named fragment where the
+// script loaded -- the whole form for the first two, the tally alone for the
+// third, which is what leaves every box and the caret where they were. Where the
+// script did not load, the same POST re-renders the page, which is how every
+// other control here works: the tally then refreshes on the next press, as it
+// did before there was a trigger at all.
+func (s *Server) reshapeEditForm(w http.ResponseWriter, r *http.Request, cb *checkbook, accounts []account.Account, acct account.Account, detail transaction.Detail, st editState, fragment string) {
 	if r.Header.Get("HX-Request") != "true" {
 		s.renderEditPage(w, r, cb, http.StatusOK, accounts, acct, detail, st, "")
 		return
@@ -518,8 +541,8 @@ func (s *Server) reshapeEditForm(w http.ResponseWriter, r *http.Request, cb *che
 	// as a 200 and half a form swapped into somebody's page.
 	var buf bytes.Buffer
 	page := s.buildEditPage(r, cb, accounts, acct, detail, st, "")
-	if err := s.pages["edit-transaction.gohtml"].ExecuteTemplate(&buf, "edit-form", page); err != nil {
-		s.log.Error("render fragment", "part", "edit-form", "err", err)
+	if err := s.pages["edit-transaction.gohtml"].ExecuteTemplate(&buf, fragment, page); err != nil {
+		s.log.Error("render fragment", "part", fragment, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

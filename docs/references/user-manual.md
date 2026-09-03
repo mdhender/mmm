@@ -1,6 +1,6 @@
 # User manual
 
-Reference for `mmm`, the household checkbook. Applies to version **0.23.1-beta**.
+Reference for `mmm`, the household checkbook. Applies to version **0.24.0-beta**.
 
 This page describes the program as it is. For the reasoning behind it, see
 [About mmm](../explanations/what-is-mmm.md). To set up a database of your own, see
@@ -367,7 +367,13 @@ Each line has a Category, a Memo, and an Amount:
   the page's script.
 
 Under the lines are three figures: the transaction's amount, what the lines assign, and what is
-**unassigned**. They are recalculated on every press.
+**unassigned**. They are recalculated whenever you leave a box you changed — type an amount and tab
+away, and they follow — and on every press besides.
+
+The figures are worked out by the program, not by your browser, which is why they are exact to the
+cent. If the browser did the arithmetic, 71.22 plus 12.95 would come to 84.17000000000002. Without
+the page's script the three figures still appear and are still exact; they refresh on **Add a
+line** and on **Save** rather than as you go.
 
 **A transaction can only be saved when nothing is unassigned.** A remainder is refused with a
 message naming all three figures, and nothing at all is written — not the parts, and not the
